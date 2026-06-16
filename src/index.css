@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-daftra-blue: #0074b1;
+  --color-daftra-dark-blue: #0d385a;
+  --color-daftra-light-blue: #eef7fc;
+  --color-daftra-gray: #7d8e9d;
+  --color-daftra-border: #d4e1ed;
+  --color-daftra-bg: #f5f8fb;
+}
+
+/* Base style resets and customizations */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-daftra-bg);
+  color: #2b3a4a;
+  direction: rtl;
+  overflow-x: hidden;
+}
+
+/* Scrollbar tweaks */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #ccd6dd;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aab8c2;
+}
+
+/* Toast message styling */
+.toast-enter {
+  transform: translateY(100px);
+  opacity: 0;
+}
+.toast-active {
+  transform: translateY(0);
+  opacity: 1;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}

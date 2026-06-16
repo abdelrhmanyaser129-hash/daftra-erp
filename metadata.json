@@ -1,0 +1,6 @@
+{
+  "name": "Daftra ERP",
+  "description": "استنساخ تفاعلي كامل لنظام دفتره لإدارة المبيعات، الفواتير، والعملاء بدعم كامل للغة العربية والاتجاه من اليمين إلى اليسار (RTL).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
