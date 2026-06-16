@@ -148,6 +148,7 @@ export default function AddClientView({ setView }: AddClientViewProps) {
       .from('clients')
       .insert({
         type,
+        name: fullName.trim(),
         full_name: fullName.trim(),
         first_name: firstName.trim() || fullName.split(' ')[0] || '',
         last_name: lastName.trim() || fullName.split(' ').slice(1).join(' ') || '',
