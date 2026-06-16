@@ -92,10 +92,21 @@ export default function UserManagementView({ setView }: UserManagementViewProps)
       return;
     }
     const email = formEmail || `${formUsername}@daftra.local`;
+
+    const { data: { session: adminSession } } = await supabase.auth.getSession();
+
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password: formPassword,
     });
+
+    if (adminSession) {
+      await supabase.auth.setSession({
+        access_token: adminSession.access_token,
+        refresh_token: adminSession.refresh_token,
+      });
+    }
+
     if (authError || !authData.user) {
       alert('خطأ في إنشاء المستخدم: ' + (authError?.message || ''));
       return;
