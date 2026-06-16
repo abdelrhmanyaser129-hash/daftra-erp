@@ -129,18 +129,22 @@ export default function AddClientView({ setView }: AddClientViewProps) {
       return;
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: checkError } = await supabase
       .from('clients')
       .select('id')
       .eq('full_name', fullName.trim())
       .maybeSingle();
 
+    if (checkError) {
+      alert('خطأ في التحقق من العميل: ' + checkError.message);
+      return;
+    }
     if (existing) {
       alert('هذا العميل موجود بالفعل. الرجاء استخدام اسم آخر.');
       return;
     }
 
-    const { data } = await supabase
+    const { error: insertError } = await supabase
       .from('clients')
       .insert({
         type,
@@ -164,9 +168,12 @@ export default function AddClientView({ setView }: AddClientViewProps) {
         notes: notes.trim(),
         category,
         billing_method: billingMethod
-      })
-      .select()
-      .single();
+      });
+
+    if (insertError) {
+      alert('خطأ في إضافة العميل: ' + insertError.message);
+      return;
+    }
 
     setView('manage-clients');
   };
