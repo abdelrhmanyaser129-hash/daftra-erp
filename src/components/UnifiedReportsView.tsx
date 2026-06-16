@@ -399,7 +399,7 @@ export default function UnifiedReportsView({ setView }: UnifiedReportsViewProps)
   useEffect(() => {
     Promise.all([
       supabase.from('invoices').select('*').order('created_at', { ascending: false }),
-      supabase.from('clients').select('id,name'),
+      supabase.from('clients').select('id,full_name'),
       supabase.from('products').select('*'),
     ]).then(([invRes, clRes, prodRes]) => {
       if (invRes.data) setInvoices(invRes.data.map(mapInvoice));
