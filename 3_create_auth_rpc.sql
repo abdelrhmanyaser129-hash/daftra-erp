@@ -1,4 +1,5 @@
 -- RPC function لإنشاء مستخدم Auth من غير ما تسجل خروج المدير
+-- مع التعامل مع تكرار الإيميل
 CREATE OR REPLACE FUNCTION create_auth_user(p_email TEXT, p_password TEXT)
 RETURNS UUID
 SECURITY DEFINER
@@ -6,6 +7,12 @@ AS $$
 DECLARE
   v_user_id UUID;
 BEGIN
+  -- لو الإيميل موجود قبل كده، رجع الـ UUID بتاعه
+  SELECT id INTO v_user_id FROM auth.users WHERE email = p_email;
+  IF FOUND THEN
+    RETURN v_user_id;
+  END IF;
+
   v_user_id := gen_random_uuid();
 
   INSERT INTO auth.users (

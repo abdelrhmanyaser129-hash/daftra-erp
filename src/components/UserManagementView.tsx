@@ -102,7 +102,7 @@ export default function UserManagementView({ setView }: UserManagementViewProps)
       alert('خطأ في إنشاء المستخدم: ' + (authError?.message || ''));
       return;
     }
-    const { error } = await supabase.from('profiles').insert({
+    const { error } = await supabase.from('profiles').upsert({
       id: authData,
       name: formName,
       username: formUsername.toLowerCase(),
@@ -111,7 +111,7 @@ export default function UserManagementView({ setView }: UserManagementViewProps)
       role: formRole,
       active: true,
       permissions: formPermissions,
-    });
+    }, { onConflict: 'id' });
     if (!error) {
       await loadUsers();
       setShowForm(false);
