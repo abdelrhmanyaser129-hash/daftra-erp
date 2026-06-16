@@ -93,26 +93,17 @@ export default function UserManagementView({ setView }: UserManagementViewProps)
     }
     const email = formEmail || `${formUsername}@daftra.local`;
 
-    const { data: { session: adminSession } } = await supabase.auth.getSession();
-
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password: formPassword,
+    const { data: authData, error: authError } = await supabase.rpc('create_auth_user', {
+      p_email: email,
+      p_password: formPassword,
     });
 
-    if (adminSession) {
-      await supabase.auth.setSession({
-        access_token: adminSession.access_token,
-        refresh_token: adminSession.refresh_token,
-      });
-    }
-
-    if (authError || !authData.user) {
+    if (authError || !authData) {
       alert('خطأ في إنشاء المستخدم: ' + (authError?.message || ''));
       return;
     }
     const { error } = await supabase.from('profiles').insert({
-      id: authData.user.id,
+      id: authData,
       name: formName,
       username: formUsername.toLowerCase(),
       email,

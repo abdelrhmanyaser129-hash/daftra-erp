@@ -48,9 +48,7 @@ function AppContent() {
   const [toastType, setToastType] = useState<'success' | 'info' | 'error'>('success');
 
   useEffect(() => {
-    if (currentUser && currentView === 'dashboard') {
-      // stays on dashboard
-    }
+    setView('dashboard');
   }, [currentUser]);
 
   const isViewAllowed = (role: string, view: string): boolean => {
