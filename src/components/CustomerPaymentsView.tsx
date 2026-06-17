@@ -12,7 +12,8 @@ import {
   Banknote,
   CreditCard,
   Building2,
-  FileText
+  FileText,
+  Search
 } from 'lucide-react';
 
 
@@ -35,6 +36,8 @@ interface CustomerPayment {
 export default function CustomerPaymentsView({ setView, showToast }: CustomerPaymentsViewProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clientFilter, setClientFilter] = useState('any');
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [paymentNumber, setPaymentNumber] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('any');
@@ -57,6 +60,7 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
   const [payments, setPayments] = useState<CustomerPayment[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
+  const [safesBanks, setSafesBanks] = useState<any[]>([]);
 
   useEffect(() => {
     loadData();
@@ -67,6 +71,8 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     if (inv) setInvoices(inv);
     const { data: cl } = await supabase.from('clients').select('*');
     if (cl) setClients(cl);
+    const { data: safes } = await supabase.from('safes_banks').select('*');
+    if (safes) setSafesBanks(safes);
   };
 
   // Add payment modal state
@@ -76,11 +82,13 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
   const [paymentMethodNew, setPaymentMethodNew] = useState('cash');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [paymentNote, setPaymentNote] = useState('');
+  const [selectedPaymentTreasuryId, setSelectedPaymentTreasuryId] = useState('');
 
-  const unpaidInvoices = invoices.filter(inv => inv.status === 'unpaid' || inv.status === 'overdue');
+  const unpaidInvoices = invoices.filter(inv => inv.status === 'unpaid' || inv.status === 'overdue' || inv.status === 'partial');
 
   const handleClearFilters = () => {
     setClientFilter('any');
+    setClientSearchQuery('');
     setPaymentNumber('');
     setInvoiceNumber('');
     setPaymentMethod('any');
@@ -112,7 +120,7 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     return `PAY-${String(lastNum + 1).padStart(6, '0')}`;
   };
 
-  const handleAddPayment = () => {
+  const handleAddPayment = async () => {
     if (!selectedInvoiceId) {
       showToast?.('الرجاء اختيار فاتورة للدفع.', 'error');
       return;
@@ -121,14 +129,17 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
       showToast?.('الرجاء إدخال مبلغ صحيح للدفعة.', 'error');
       return;
     }
+    if (!selectedPaymentTreasuryId) {
+      showToast?.('الرجاء اختيار الخزنة أو الحساب البنكي.', 'error');
+      return;
+    }
 
     const invoice = invoices.find(inv => inv.id === selectedInvoiceId);
     if (!invoice) return;
 
-    if (paymentAmount > invoice.total) {
-      showToast?.('المبلغ المدخل أكبر من قيمة الفاتورة المتبقية.', 'error');
-      return;
-    }
+    const paidSoFar = (invoice.deposit_amount || 0);
+    const newPaid = paidSoFar + paymentAmount;
+    const newStatus = newPaid >= invoice.total ? 'paid' : 'partial';
 
     const payment: CustomerPayment = {
       id: `pay-${Date.now()}`,
@@ -141,16 +152,49 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
       status: 'completed'
     };
 
-    supabase.from('invoices').update({ status: 'paid' }).eq('id', selectedInvoiceId).then(() => {
-      loadData();
-    });
+    // Update invoice status and deposit/remaining
+    await supabase.from('invoices').update({
+      status: newStatus,
+      deposit_amount: newPaid,
+      remaining_amount: Math.max(0, invoice.total - newPaid)
+    }).eq('id', selectedInvoiceId);
+
+    // Treasury update
+    const { data: treasury } = await supabase.from('safes_banks').select('balance').eq('id', selectedPaymentTreasuryId).single();
+    if (treasury) {
+      const currentBalance = parseFloat(treasury.balance) || 0;
+      const newBalance = currentBalance + paymentAmount;
+      await supabase.from('safes_banks').update({ balance: newBalance }).eq('id', selectedPaymentTreasuryId);
+      await supabase.from('treasury_transactions').insert({
+        treasury_id: selectedPaymentTreasuryId,
+        transaction_type: 'sale_payment',
+        reference_type: 'invoice',
+        reference_id: selectedInvoiceId,
+        reference_number: invoice.invoiceNumber,
+        description: `تحصيل دفعة ${paymentAmount} ج.م من ${invoice.clientName} - فاتورة ${invoice.invoiceNumber}`,
+        amount: paymentAmount,
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        created_by: 'system'
+      });
+    }
+
+    // Client balance update
+    const { data: client } = await supabase.from('clients').select('balance, id').eq('name', invoice.clientName).single();
+    if (client) {
+      const oldBal = parseFloat(client.balance) || 0;
+      await supabase.from('clients').update({ balance: oldBal - paymentAmount }).eq('id', client.id);
+    }
+
     setPayments(prev => [payment, ...prev]);
     setShowAddModal(false);
     setSelectedInvoiceId('');
+    setSelectedPaymentTreasuryId('');
     setPaymentAmount(0);
     setPaymentMethodNew('cash');
     setPaymentDate(new Date().toISOString().split('T')[0]);
     setPaymentNote('');
+    loadData();
     showToast?.(`تم تسجيل دفعة بقيمة ${paymentAmount} ج.م للفاتورة #${invoice.invoiceNumber} بنجاح.`);
   };
 
@@ -189,18 +233,55 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
             <div className="md:col-span-4 space-y-1.5 text-right flex flex-col">
               <label className="text-xs font-bold text-slate-600 block">العميل</label>
               <div className="relative">
-                <select
-                  value={clientFilter}
-                  onChange={(e) => setClientFilter(e.target.value)}
-                  className="w-full bg-white border border-[#cbd5e1] hover:border-slate-400 rounded px-3 py-1.5 text-xs text-slate-700 outline-none transition-colors appearance-none cursor-pointer text-right pl-8"
-                  style={{ direction: 'rtl' }}
-                >
-                  <option value="any">أي عميل</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.fullName}>{c.fullName}</option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="أي عميل"
+                  value={clientFilter === 'any' ? clientSearchQuery : clientFilter}
+                  onChange={(e) => {
+                    setClientSearchQuery(e.target.value);
+                    setShowClientDropdown(true);
+                    setClientFilter('any');
+                  }}
+                  onFocus={() => setShowClientDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowClientDropdown(false), 200)}
+                  className="w-full bg-white border border-[#cbd5e1] hover:border-slate-400 rounded px-3 py-1.5 text-xs text-slate-700 outline-none transition-colors text-right"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2 pointer-events-none" />
+                {showClientDropdown && (
+                  <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                    <div
+                      className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 text-slate-400"
+                      onMouseDown={() => {
+                        setClientFilter('any');
+                        setClientSearchQuery('');
+                        setShowClientDropdown(false);
+                      }}
+                    >
+                      الكل
+                    </div>
+                    {(clientSearchQuery.trim()
+                      ? clients.filter(c =>
+                          c.fullName.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                          (c.mobile || '').includes(clientSearchQuery) ||
+                          (c.phone || '').includes(clientSearchQuery)
+                        )
+                      : clients
+                    ).map(c => (
+                      <div
+                        key={c.id}
+                        onMouseDown={() => {
+                          setClientFilter(c.fullName);
+                          setClientSearchQuery(c.fullName);
+                          setShowClientDropdown(false);
+                        }}
+                        className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                      >
+                        <span className="font-bold text-slate-700">{c.fullName}</span>
+                        <span className="text-slate-400 text-[10px]">{c.mobile || c.phone}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="md:col-span-4 space-y-1.5 text-right">
@@ -517,6 +598,24 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
                         onChange={(e) => setPaymentDate(e.target.value)}
                         className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none text-right"
                       />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700">الخزنة / الحساب البنكي <span className="text-rose-500">*</span></label>
+                      <div className="relative">
+                        <select
+                          value={selectedPaymentTreasuryId}
+                          onChange={(e) => setSelectedPaymentTreasuryId(e.target.value)}
+                          className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none appearance-none cursor-pointer text-right pl-8"
+                          style={{ direction: 'rtl' }}
+                        >
+                          <option value="">-- اختر الخزنة --</option>
+                          {safesBanks.map(sb => (
+                            <option key={sb.id} value={sb.id}>{sb.name}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                      </div>
                     </div>
 
                     <div className="space-y-1.5">

@@ -195,9 +195,17 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     }
   };
 
+  const normalizePhone = (phone: string): string => {
+    let p = phone.replace(/[^0-9]/g, '');
+    if (p.startsWith('00')) p = p.slice(2);
+    if (p.startsWith('0')) p = '20' + p.slice(1);
+    if (!p.startsWith('20')) p = '20' + p;
+    return p;
+  };
+
   const openWhatsApp = () => {
     const phone = client?.phone || client?.mobile || '';
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    const cleanPhone = normalizePhone(phone);
     if (!cleanPhone) return;
     const weightStr = currentRecord ? `${currentRecord.weight} كجم` : 'غير مسجل';
     const targetStr = parseFloat(targetWeightVal) ? `${targetWeightVal} كجم` : 'غير محدد';

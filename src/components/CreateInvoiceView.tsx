@@ -326,28 +326,35 @@ export default function CreateInvoiceView({
       return;
     }
 
-    const calculatedStatusValue = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
+    const deposit = depositAmount || 0;
+    const remaining = grandTotal - deposit;
 
-    if (calculatedStatusValue === 'paid' && !selectedWarehouseId) {
+    let calculatedStatusValue = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
+    if (statusOverride !== 'draft') {
+      if (deposit > 0 && deposit >= grandTotal) {
+        calculatedStatusValue = 'paid';
+      } else if (deposit > 0 && deposit < grandTotal) {
+        calculatedStatusValue = 'partial';
+      }
+    }
+
+    if ((calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') && !selectedWarehouseId) {
       alert('الرجاء اختيار المستودع لتسجيل حركة المخزون.');
       return;
     }
 
-    if (calculatedStatusValue === 'paid' && !selectedTreasuryId) {
+    if ((calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') && !selectedTreasuryId) {
       alert('الرجاء اختيار الخزنة أو الحساب البنكي لتسجيل المعاملة المالية.');
       return;
     }
 
     const hasProductItems = items.some(item => item.productId);
-    if (calculatedStatusValue === 'paid' && !hasProductItems) {
+    if ((calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') && !hasProductItems) {
       alert('الرجاء اختيار منتجات من القائمة لتسجيل حركة المخزون.');
       return;
     }
 
     const customer = finalSelectedClient;
-
-    const deposit = depositAmount || 0;
-    const remaining = grandTotal - deposit;
 
     const invoicePayload: any = {
       invoice_number: invoiceNumber,
@@ -391,7 +398,7 @@ export default function CreateInvoiceView({
       invoiceNumberStr = ins.invoice_number;
     }
 
-    if (calculatedStatusValue === 'paid') {
+    if (calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') {
       for (const item of items) {
         if (item.productId && item.quantity > 0) {
           await recordInventoryMovement(item.productId, selectedWarehouseId, 'sale', 'invoice', invoiceId, invoiceNumberStr, -item.quantity, salesAgent);
@@ -419,7 +426,7 @@ export default function CreateInvoiceView({
 
       const oldBalance = Number(customer.balance) || 0;
       await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
-    } else if (calculatedStatusValue !== 'draft') {
+    } else if (calculatedStatusValue !== 'draft' && calculatedStatusValue !== 'partial') {
       const oldBalance = Number(customer.balance) || 0;
       await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
     }

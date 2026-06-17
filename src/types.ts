@@ -14,7 +14,7 @@ export interface InvoiceItem {
   total: number;
 }
 
-export type InvoiceStatus = 'draft' | 'paid' | 'unpaid' | 'overdue';
+export type InvoiceStatus = 'draft' | 'paid' | 'unpaid' | 'overdue' | 'partial';
 
 export interface Invoice {
   id: string;

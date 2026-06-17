@@ -388,10 +388,11 @@ export default function DashboardView({
                         <td className="p-3 font-mono font-bold">{inv.total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</td>
                         <td className="p-3 text-center">
                           <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            inv.status === 'paid' ? 'bg-green-100 text-green-700' :
-                            inv.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-                          }`}>
-                            {inv.status === 'paid' ? 'مدفوعة' : inv.status === 'overdue' ? 'متأخرة' : 'مسودة'}
+                          inv.status === 'paid' ? 'bg-green-100 text-green-700' :
+                          inv.status === 'partial' ? 'bg-blue-100 text-blue-700' :
+                          inv.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {inv.status === 'paid' ? 'مدفوعة' : inv.status === 'partial' ? 'مدفوعة جزئياً' : inv.status === 'overdue' ? 'متأخرة' : 'مسودة'}
                           </span>
                         </td>
                       </tr>

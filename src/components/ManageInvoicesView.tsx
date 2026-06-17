@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Pencil,
   Trash2,
-  MessageCircle
+  MessageCircle,
+  Search
 } from 'lucide-react';
 import { Invoice } from '../types';
 import { supabase } from '../lib/supabase';
@@ -28,12 +29,16 @@ interface ManageInvoicesViewProps {
 
 export default function ManageInvoicesView({ setView, searchQuery = '', onEditInvoice }: ManageInvoicesViewProps) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
 
   useEffect(() => {
     supabase.from('invoices').select('*').order('created_at', { ascending: false }).then(({ data }) => {
       if (data) {
         setInvoices(data.map(mapInvoiceRow));
       }
+    });
+    supabase.from('clients').select('id, fullName, mobile, phone').then(({ data }) => {
+      if (data) setClients(data);
     });
   }, []);
 
@@ -63,6 +68,8 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
 
   // Advanced search parameters matching the Daftra UI screenshot
   const [clientFilter, setClientFilter] = useState('any');
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [invoiceNumberFilter, setInvoiceNumberFilter] = useState(searchQuery);
   const [statusFilter, setStatusFilter] = useState('any');
@@ -114,6 +121,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
 
   const handleClearFilters = () => {
     setClientFilter('any');
+    setClientSearchQuery('');
     setInvoiceNumberFilter('');
     setStatusFilter('any');
     setContainsItemFilter('');
@@ -152,7 +160,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
   const handleDeleteInvoice = async (id: string) => {
     const { data: dbInv } = await supabase.from('invoices').select('*').eq('id', id).single();
     if (!dbInv) { setDeleteConfirmId(null); return; }
-    if (dbInv.status === 'paid') {
+    if (dbInv.status === 'paid' || dbInv.status === 'partial') {
       for (const item of (dbInv.items || [])) {
         if (item.productId && item.quantity > 0) {
           const wId = dbInv.warehouse_id;
@@ -210,31 +218,46 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
     return encodeURIComponent(lines.join('\n'));
   };
 
+  const normalizePhone = (phone: string): string => {
+    let p = phone.replace(/[^0-9]/g, '');
+    if (p.startsWith('00')) p = p.slice(2);
+    if (p.startsWith('0')) p = '20' + p.slice(1);
+    if (!p.startsWith('20')) p = '20' + p;
+    return p;
+  };
+
   const handleWhatsApp = async (inv: Invoice) => {
     if (!inv.clientName) { alert('لا يوجد اسم عميل لإرسال الواتساب.'); return; }
     const { data: clients } = await supabase.from('clients').select('mobile, phone').eq('name', inv.clientName).limit(1);
     const phone = clients && clients.length > 0 ? (clients[0].mobile || clients[0].phone) : '';
     if (!phone) { alert('لا يوجد رقم هاتف للعميل.'); return; }
+    const cleanPhone = normalizePhone(phone);
     const msg = formatWhatsAppMessage(inv);
-    window.open(`https://wa.me/${phone.replace(/^0+/, '2')}?text=${msg}`, '_blank');
+    window.open(`https://wa.me/${cleanPhone}?text=${msg}`, '_blank');
   };
 
   const filteredInvoices = invoices.filter(inv => {
     // 1. Invoice status tag
     if (activeResultsTab === 'overdue' && inv.status !== 'overdue') return false;
-    if (activeResultsTab === 'due' && inv.status !== 'unpaid') return false; // due corresponds to unpaid here
+    if (activeResultsTab === 'due' && inv.status !== 'unpaid') return false;
     if (activeResultsTab === 'unpaid' && inv.status !== 'unpaid') return false;
     if (activeResultsTab === 'draft' && inv.status !== 'draft') return false;
+    if (activeResultsTab === 'partial' && inv.status !== 'partial') return false;
 
     // Optional fields
     if (invoiceNumberFilter && !inv.invoiceNumber.toLowerCase().includes(invoiceNumberFilter.toLowerCase())) return false;
     if (statusFilter !== 'any') {
       if (statusFilter === 'paid' && inv.status !== 'paid') return false;
+      if (statusFilter === 'partial' && inv.status !== 'partial') return false;
       if (statusFilter === 'unpaid' && inv.status !== 'unpaid') return false;
       if (statusFilter === 'overdue' && inv.status !== 'overdue') return false;
       if (statusFilter === 'draft' && inv.status !== 'draft') return false;
     }
-    if (clientFilter !== 'any' && !inv.clientName.toLowerCase().includes(clientFilter.toLowerCase())) return false;
+    if (clientFilter !== 'any') {
+      const clientMatch = clients.find(c => c.fullName === inv.clientName);
+      const mobileMatch = clientMatch && (clientMatch.mobile || '').includes(clientFilter);
+      if (!inv.clientName.toLowerCase().includes(clientFilter.toLowerCase()) && !mobileMatch) return false;
+    }
 
     if (totalMin && inv.total < parseFloat(totalMin)) return false;
     if (totalMax && inv.total > parseFloat(totalMax)) return false;
@@ -293,17 +316,55 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
           <div>
             <label className="block font-bold text-slate-600 mb-1.5">العميل</label>
             <div className="relative">
-              <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                className="w-full h-[36px] bg-white border border-[#cbd5e1] rounded px-3 text-xs focus:ring-1 focus:ring-sky-500 focus:border-sky-500 focus:outline-none cursor-pointer appearance-none text-slate-600 font-medium"
-              >
-                <option value="any">أي عميل</option>
-                {invoices.map((i, idx) => (
-                  <option key={idx} value={i.clientName}>{i.clientName}</option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-[14px] absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="أي عميل"
+                value={clientFilter === 'any' ? clientSearchQuery : clientFilter}
+                onChange={(e) => {
+                  setClientSearchQuery(e.target.value);
+                  setShowClientDropdown(true);
+                  setClientFilter('any');
+                }}
+                onFocus={() => setShowClientDropdown(true)}
+                onBlur={() => setTimeout(() => setShowClientDropdown(false), 200)}
+                className="w-full h-[36px] bg-white border border-[#cbd5e1] rounded px-3 text-xs focus:ring-1 focus:ring-sky-500 focus:border-sky-500 focus:outline-none text-slate-600 font-medium"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+              {showClientDropdown && (
+                <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                  <div
+                    className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 text-slate-400"
+                    onMouseDown={() => {
+                      setClientFilter('any');
+                      setClientSearchQuery('');
+                      setShowClientDropdown(false);
+                    }}
+                  >
+                    الكل
+                  </div>
+                  {(clientSearchQuery.trim()
+                    ? clients.filter(c =>
+                        c.fullName.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                        (c.mobile || '').includes(clientSearchQuery) ||
+                        (c.phone || '').includes(clientSearchQuery)
+                      )
+                    : clients
+                  ).map(c => (
+                    <div
+                      key={c.id}
+                      onMouseDown={() => {
+                        setClientFilter(c.fullName);
+                        setClientSearchQuery(c.fullName);
+                        setShowClientDropdown(false);
+                      }}
+                      className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                    >
+                      <span className="font-bold text-slate-700">{c.fullName}</span>
+                      <span className="text-slate-400 text-[10px]">{c.mobile || c.phone}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -766,6 +827,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
               { id: 'all', name: 'الكل' },
               { id: 'overdue', name: 'متأخر' },
               { id: 'due', name: 'مستحقة الدفع' },
+              { id: 'partial', name: 'مدفوعة جزئياً' },
               { id: 'unpaid', name: 'غير مدفوعة' },
               { id: 'draft', name: 'مسودة' },
               { id: 'overpaid', name: 'مدفوع بالزيادة' }
@@ -858,11 +920,13 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
                         <span className={`inline-block px-3 py-1 rounded text-[10px] font-black text-center ${
                           inv.status === 'paid' ? 'bg-[#e2f9e4] text-[#117622]' :
                           inv.status === 'overdue' ? 'bg-[#ffebee] text-[#c62828]' :
-                          inv.status === 'unpaid' ? 'bg-[#fef3d6] text-[#b28400]' : 'bg-slate-100 text-slate-600'
+                          inv.status === 'unpaid' ? 'bg-[#fef3d6] text-[#b28400]' :
+                          inv.status === 'partial' ? 'bg-[#dbeafe] text-[#1d4ed8]' : 'bg-slate-100 text-slate-600'
                         }`}>
                           {inv.status === 'paid' && '● مدفوعة بالكامل'}
                           {inv.status === 'overdue' && '▲ متأخرة السداد'}
                           {inv.status === 'unpaid' && '■ غير مدفوعة'}
+                          {inv.status === 'partial' && '◐ مدفوعة جزئياً'}
                           {inv.status === 'draft' && '◇ مسودة'}
                         </span>
                       </td>

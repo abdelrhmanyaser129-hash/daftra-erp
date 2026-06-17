@@ -70,6 +70,8 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clientFilter, setClientFilter] = useState('any');
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [containsItem, setContainsItem] = useState('');
   const [currency, setCurrency] = useState('any');
@@ -120,6 +122,7 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
 
   const handleClearFilters = () => {
     setClientFilter('any');
+    setClientSearchQuery('');
     setInvoiceNumber('');
     setContainsItem('');
     setCurrency('any');
@@ -389,18 +392,55 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
             <div className="md:col-span-5 space-y-1.5 text-right flex flex-col">
               <label className="text-xs font-bold text-slate-600 block">العميل</label>
               <div className="relative">
-                <select
-                  value={clientFilter}
-                  onChange={(e) => setClientFilter(e.target.value)}
-                  className="w-full bg-white border border-[#cbd5e1] hover:border-slate-400 rounded px-3 py-1.5 text-xs text-slate-700 outline-none transition-colors appearance-none cursor-pointer text-right pl-8"
-                  style={{ direction: 'rtl' }}
-                >
-                  <option value="any">أي عميل</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.fullName}>{c.fullName}</option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="أي عميل"
+                  value={clientFilter === 'any' ? clientSearchQuery : clientFilter}
+                  onChange={(e) => {
+                    setClientSearchQuery(e.target.value);
+                    setShowClientDropdown(true);
+                    setClientFilter('any');
+                  }}
+                  onFocus={() => setShowClientDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowClientDropdown(false), 200)}
+                  className="w-full bg-white border border-[#cbd5e1] hover:border-slate-400 rounded px-3 py-1.5 text-xs text-slate-700 outline-none transition-colors text-right"
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2 pointer-events-none" />
+                {showClientDropdown && (
+                  <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                    <div
+                      className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 text-slate-400"
+                      onMouseDown={() => {
+                        setClientFilter('any');
+                        setClientSearchQuery('');
+                        setShowClientDropdown(false);
+                      }}
+                    >
+                      الكل
+                    </div>
+                    {(clientSearchQuery.trim()
+                      ? clients.filter(c =>
+                          c.fullName.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                          (c.mobile || '').includes(clientSearchQuery) ||
+                          (c.phone || '').includes(clientSearchQuery)
+                        )
+                      : clients
+                    ).map(c => (
+                      <div
+                        key={c.id}
+                        onMouseDown={() => {
+                          setClientFilter(c.fullName);
+                          setClientSearchQuery(c.fullName);
+                          setShowClientDropdown(false);
+                        }}
+                        className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                      >
+                        <span className="font-bold text-slate-700">{c.fullName}</span>
+                        <span className="text-slate-400 text-[10px]">{c.mobile || c.phone}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="md:col-span-4 space-y-1.5 text-right">
@@ -663,26 +703,28 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
           </div>
         </div>
         <div className="p-6">
-          {returnedInvoices.length === 0 ? (
-            <div className="border border-[#ffebcc] bg-[#fffbf2] text-amber-800 rounded p-4 text-center flex items-center justify-center gap-2 select-none shadow-3xs">
-              <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-              <span className="text-xs font-bold">لا يوجد إيصالات ارتجاع</span>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-right border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-slate-400 font-bold">
-                    <th className="py-2.5">رقم الإيصال</th>
-                    <th className="py-2.5">الفاتورة</th>
-                    <th className="py-2.5">العميل</th>
-                    <th className="py-2.5">التاريخ</th>
-                    <th className="py-2.5">القيمة</th>
-                    <th className="py-2.5">الحالة</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {returnedInvoices.map((inv) => (
+          {(() => {
+            const filteredReturns = returnedInvoices.filter(inv => clientFilter === 'any' || inv.clientName === clientFilter);
+            return filteredReturns.length === 0 ? (
+              <div className="border border-[#ffebcc] bg-[#fffbf2] text-amber-800 rounded p-4 text-center flex items-center justify-center gap-2 select-none shadow-3xs">
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                <span className="text-xs font-bold">{returnedInvoices.length === 0 ? 'لا يوجد إيصالات ارتجاع' : 'لا توجد نتائج مطابقة للبحث'}</span>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-right border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400 font-bold">
+                      <th className="py-2.5">رقم الإيصال</th>
+                      <th className="py-2.5">الفاتورة</th>
+                      <th className="py-2.5">العميل</th>
+                      <th className="py-2.5">التاريخ</th>
+                      <th className="py-2.5">القيمة</th>
+                      <th className="py-2.5">الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredReturns.map((inv) => (
                     <tr key={inv.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                       <td className="py-3 font-semibold text-slate-700">{inv.returnNumber}</td>
                       <td className="py-3 font-semibold text-slate-700">#{inv.invoiceNumber}</td>
@@ -701,7 +743,8 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                 </tbody>
               </table>
             </div>
-          )}
+          );
+          })()}
         </div>
       </div>
 

@@ -153,18 +153,22 @@ function ReportPage({ reportType, onBack, invoices, clients, products }: {
       case 'sales': {
         const total = locals.reduce((s, i) => s + i.total, 0);
         const paid = locals.filter(i => i.status === 'paid').length;
+        const partial = locals.filter(i => i.status === 'partial').length;
         return [
           { label: 'إجمالي المبيعات', value: `${total.toLocaleString()} ج.م` },
           { label: 'عدد الفواتير', value: `${locals.length}` },
-          { label: 'المدفوعة', value: `${paid}` },
+          { label: 'مدفوعة بالكامل', value: `${paid}` },
+          { label: 'مدفوعة جزئياً', value: `${partial}` },
         ];
       }
       case 'invoices': {
         const paid = locals.filter(i => i.status === 'paid').length;
+        const partial = locals.filter(i => i.status === 'partial').length;
         const unpaid = locals.filter(i => i.status === 'unpaid').length;
         return [
           { label: 'إجمالي الفواتير', value: `${locals.length}` },
-          { label: 'مدفوعة', value: `${paid}` },
+          { label: 'مدفوعة بالكامل', value: `${paid}` },
+          { label: 'مدفوعة جزئياً', value: `${partial}` },
           { label: 'غير مدفوعة', value: `${unpaid}` },
         ];
       }
