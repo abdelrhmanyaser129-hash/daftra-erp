@@ -467,13 +467,13 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     // Update vendor balance
     const { data: vendorBalData } = await supabase
       .from('purchase_vendors')
-      .select('opening_balance')
+      .select('balance')
       .eq('id', vendor.id)
       .single();
-    const currentBal = Number(vendorBalData?.opening_balance || 0);
+    const currentBal = Number(vendorBalData?.balance || 0);
     await supabase
       .from('purchase_vendors')
-      .update({ opening_balance: currentBal + calculatedGrandTotal })
+      .update({ balance: currentBal + calculatedGrandTotal })
       .eq('id', vendor.id);
 
     // Reset and return
@@ -577,13 +577,13 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     // Update vendor balance
     const { data: vendorBalData } = await supabase
       .from('purchase_vendors')
-      .select('opening_balance')
+      .select('balance')
       .eq('id', vendor.id)
       .single();
-    const currentBal = Number(vendorBalData?.opening_balance || 0);
+    const currentBal = Number(vendorBalData?.balance || 0);
     await supabase
       .from('purchase_vendors')
-      .update({ opening_balance: currentBal + calculatedGrandTotal })
+      .update({ balance: currentBal + calculatedGrandTotal })
       .eq('id', vendor.id);
 
     // Reload full invoice list

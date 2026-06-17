@@ -29,9 +29,10 @@ ALTER TABLE receipt_vouchers ADD COLUMN IF NOT EXISTS treasury_id UUID REFERENCE
 ALTER TABLE purchase_vendors ADD COLUMN IF NOT EXISTS balance DECIMAL(10,2) DEFAULT 0;
 
 -- 5. Initialize vendor balance from existing invoices
+-- already_paid is BOOLEAN: if true, invoice is fully paid (balance=0); if false, total is owed
 UPDATE purchase_vendors pv
 SET balance = COALESCE((
-  SELECT SUM(COALESCE(pi.total, 0) - COALESCE(pi.already_paid::numeric, 0))
+  SELECT SUM(COALESCE(pi.total, 0) - CASE WHEN pi.already_paid THEN pi.total ELSE 0 END)
   FROM purchase_invoices pi
   WHERE pi.vendor_id = pv.id
 ), 0);
