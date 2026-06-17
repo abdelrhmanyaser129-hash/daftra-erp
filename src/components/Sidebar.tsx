@@ -272,6 +272,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
               >
                 المستودعات
               </button>
+              <button
+                onClick={() => handleMenuClick('composite-products')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('composite-products') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                المنتجات المركبة
+              </button>
 
             </div>
           </div>}
@@ -330,6 +338,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
                 }`}
               >
                 مدفوعات الموردين
+              </button>
+              <button
+                onClick={() => handleMenuClick('supplier-statement')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('supplier-statement') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                كشف حساب المورد
               </button>
             </div>
           </div>}

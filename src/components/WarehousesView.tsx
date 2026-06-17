@@ -66,9 +66,19 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<string>('');
 
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState<string>('');
+
   // Loaded at mount
   useEffect(() => {
     const loadData = async () => {
+      // Fetch default warehouse id
+      const { data: warehouseData } = await supabase
+        .from('warehouses')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+      if (warehouseData) setDefaultWarehouseId(warehouseData.id);
+
       // Fetch products
       const { data: productsData } = await supabase
         .from('products')
@@ -110,10 +120,26 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
   }, []);
 
   // Save changes
+  const reloadStock = async () => {
+    const { data: stockData } = await supabase
+      .from('warehouse_stock')
+      .select('product_id, warehouse_id, quantity');
+    const stockLevels: WarehouseStock = {};
+    if (stockData && stockData.length > 0) {
+      for (const s of stockData) {
+        const pid = s.product_id as string;
+        const wid = s.warehouse_id as string;
+        if (!stockLevels[pid]) stockLevels[pid] = {};
+        stockLevels[pid][wid] = Number(s.quantity);
+      }
+    }
+    setStock(stockLevels);
+  };
+
   const saveStockData = async (updatedStock: WarehouseStock) => {
     setStock(updatedStock);
-    // Upsert all warehouse stock records for w1
-    const warehouseId = 'w1';
+    const warehouseId = defaultWarehouseId;
+    if (!warehouseId) return;
     const records = Object.entries(updatedStock).flatMap(([productId, warehouses]) =>
       Object.entries(warehouses).map(([wid, quantity]) => ({
         product_id: productId,
@@ -121,18 +147,23 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
         quantity,
       }))
     );
-    // Only upsert records that belong to the default warehouse w1
     const w1Records = records.filter(r => r.warehouse_id === warehouseId);
     if (w1Records.length > 0) {
-      await supabase
+      const { error } = await supabase
         .from('warehouse_stock')
         .upsert(w1Records, { onConflict: 'product_id, warehouse_id' });
+      if (error) {
+        console.error('Stock save failed:', error);
+        alert('فشل حفظ المخزون');
+      }
     }
+    await reloadStock();
   };
 
   // Helper to extract stock level for w1
   const getProductQuantity = (productId: string, currentStock = stock): number => {
-    return currentStock[productId]?.['w1'] ?? 0;
+    if (!defaultWarehouseId) return 0;
+    return currentStock[productId]?.[defaultWarehouseId] ?? 0;
   };
 
   // Helper to get warning level details
@@ -173,8 +204,8 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     if (!updatedStock[productId]) {
       updatedStock[productId] = {};
     }
-    const current = updatedStock[productId]['w1'] ?? 0;
-    updatedStock[productId]['w1'] = current + 1;
+    const current = defaultWarehouseId ? (updatedStock[productId][defaultWarehouseId] ?? 0) : 0;
+    if (defaultWarehouseId) updatedStock[productId][defaultWarehouseId] = current + 1;
     await saveStockData(updatedStock);
   };
 
@@ -184,8 +215,8 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     if (!updatedStock[productId]) {
       updatedStock[productId] = {};
     }
-    const current = updatedStock[productId]['w1'] ?? 0;
-    updatedStock[productId]['w1'] = Math.max(0, current - 1);
+    const current = defaultWarehouseId ? (updatedStock[productId][defaultWarehouseId] ?? 0) : 0;
+    if (defaultWarehouseId) updatedStock[productId][defaultWarehouseId] = Math.max(0, current - 1);
     await saveStockData(updatedStock);
   };
 
@@ -196,7 +227,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     if (!updatedStock[productId]) {
       updatedStock[productId] = {};
     }
-    updatedStock[productId]['w1'] = numeric;
+    if (defaultWarehouseId) updatedStock[productId][defaultWarehouseId] = numeric;
     await saveStockData(updatedStock);
     setEditingProductId(null);
   };

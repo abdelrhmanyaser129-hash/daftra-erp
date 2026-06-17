@@ -51,6 +51,14 @@ interface PurchaseInvoiceItem {
   discount: number; // Discount value
   taxValue: number; // VAT e.g. 14 or 0 (Egyptian)
   total: number;
+  product_id?: string;
+}
+
+interface Product {
+  id: string;
+  name: string;
+  code: string;
+  selling_price: number;
 }
 
 interface PurchaseInvoice {
@@ -146,6 +154,11 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
   const [grandTotal, setGrandTotal] = useState<number>(0);
   const [previewInvoice, setPreviewInvoice] = useState<PurchaseInvoice | null>(null);
 
+  const [products, setProducts] = useState<Product[]>([]);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
+  const [productSearchText, setProductSearchText] = useState<Record<string, string>>({});
+
   // Load from Supabase
   useEffect(() => {
     const loadData = async () => {
@@ -200,6 +213,15 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       } else {
         setVendors([]);
       }
+
+      const { data: productsData } = await supabase
+        .from('products')
+        .select('id, name, code, selling_price');
+      if (productsData) {
+        setProducts(productsData);
+      } else {
+        setProducts([]);
+      }
     };
     loadData();
   }, [currentMode]);
@@ -209,12 +231,8 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     let currentSubtotal = 0;
     const computedItems = items.map(item => {
       const rawTotal = item.unitPrice * item.quantity;
-      const discountAmount = item.discount; // assuming flat discount on line level
-      const taxedBase = Math.max(0, rawTotal - discountAmount);
-      const taxAmount = taxedBase * (item.taxValue / 100);
-      const total = taxedBase + taxAmount;
       currentSubtotal += rawTotal;
-      return { ...item, total };
+      return { ...item, total: rawTotal };
     });
 
     setSubtotal(currentSubtotal);
@@ -227,21 +245,14 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       globalDiscount = globalDiscountValue;
     }
 
-    // Adjusted base
-    const totalWithGlobalDiscount = Math.max(0, currentSubtotal - globalDiscount);
-
-    // Dynamic default overall 14% tax on the grand total base if row-level tax isn't fully computed,
-    // let's compute aggregate tax from row items:
+    // Aggregate tax from row items
     let aggregateTax = 0;
     items.forEach(item => {
-      const rawTotal = item.unitPrice * item.quantity;
-      const discountAmount = item.discount;
-      const taxedBase = Math.max(0, rawTotal - discountAmount);
-      aggregateTax += taxedBase * (item.taxValue / 100);
+      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
     });
 
-    const finalTotal = totalWithGlobalDiscount + aggregateTax + Number(adjustmentValue);
-    setGrandTotal(finalTotal);
+    const finalTotal = currentSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
+    setGrandTotal(Math.max(0, finalTotal));
   }, [items, globalDiscountType, globalDiscountValue, adjustmentValue]);
 
   // Generate next automatic sequential purchase invoice number
@@ -256,6 +267,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
   // Switch to ADD Mode and initialize the fields
   const handleOpenAddNewInvoice = () => {
+    setEditingInvoiceId(null);
     setInvoiceNumber(generateNextInvoiceNumber());
     setSelectedVendorId('');
     setInvoiceDate('2026-06-14');
@@ -265,6 +277,8 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     setAdjustmentValue(0);
     setAlreadyPaid(false);
     setPaymentReference('');
+    setShowProductDropdown({});
+    setProductSearchText({});
     setItems([
       {
         id: 'p-item-1',
@@ -368,16 +382,12 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     // Prepare Invoice Item Data
     let calculatedSubtotal = 0;
     const finalItems = items.map(item => {
-      const rawTotal = item.unitPrice * item.quantity;
-      const discountAmount = item.discount;
-      const taxedBase = Math.max(0, rawTotal - discountAmount);
-      const taxAmount = taxedBase * (item.taxValue / 100);
-      const total = taxedBase + taxAmount;
-      calculatedSubtotal += rawTotal;
+      const rowTotal = item.unitPrice * item.quantity;
+      calculatedSubtotal += rowTotal;
       return {
         ...item,
         itemName: item.itemName ? item.itemName : 'بند توريد جديد',
-        total
+        total: rowTotal
       };
     });
 
@@ -390,10 +400,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
     let aggregateTax = 0;
     finalItems.forEach(item => {
-      const rawTotal = item.unitPrice * item.quantity;
-      const discountAmount = item.discount;
-      const taxedBase = Math.max(0, rawTotal - discountAmount);
-      aggregateTax += taxedBase * (item.taxValue / 100);
+      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
     });
 
     const calculatedGrandTotal = calculatedSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
@@ -457,7 +464,130 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
     setPurchaseInvoices([newPurchaseInvoice, ...purchaseInvoices]);
 
+    // Update vendor balance
+    const { data: vendorBalData } = await supabase
+      .from('purchase_vendors')
+      .select('opening_balance')
+      .eq('id', vendor.id)
+      .single();
+    const currentBal = Number(vendorBalData?.opening_balance || 0);
+    await supabase
+      .from('purchase_vendors')
+      .update({ opening_balance: currentBal + calculatedGrandTotal })
+      .eq('id', vendor.id);
+
     // Reset and return
+    setCurrentMode('list');
+  };
+
+  // Load existing invoice into form for editing
+  const handleEditInvoice = (invoice: PurchaseInvoice) => {
+    setEditingInvoiceId(invoice.id);
+    setInvoiceNumber(invoice.invoiceNumber);
+    setInvoiceDate(invoice.date);
+    setIssueDate(invoice.issueDate);
+    setSelectedVendorId(invoice.vendorId);
+    setPaymentTerms(invoice.paymentTerms);
+    setBillingTemplate(invoice.billingTemplate);
+    setCurrency(invoice.currency);
+    setItems(invoice.items.map(item => ({
+      ...item,
+      product_id: (item as any).product_id || undefined,
+    })));
+    setGlobalDiscountType(invoice.discountType);
+    setGlobalDiscountValue(invoice.discountValue);
+    setAdjustmentValue(invoice.adjustment);
+    setNotes(invoice.notes);
+    setAlreadyPaid(invoice.alreadyPaid);
+    setPaymentMethod(invoice.paymentMethod);
+    setPaymentReference(invoice.paymentReference);
+    setShowProductDropdown({});
+    setProductSearchText({});
+    setCurrentMode('add');
+    setPreviewInvoice(null);
+  };
+
+  // Update existing invoice
+  const handleUpdateInvoice = async (status: 'paid' | 'draft' | 'unpaid') => {
+    const vendor = vendors.find(v => v.id === selectedVendorId);
+    if (!vendor) {
+      alert('الرجاء اختيار المورد أولاً قبل تحديث الفاتورة.');
+      return;
+    }
+
+    let calculatedSubtotal = 0;
+    const finalItems = items.map(item => {
+      const rowTotal = item.unitPrice * item.quantity;
+      calculatedSubtotal += rowTotal;
+      return {
+        ...item,
+        itemName: item.itemName ? item.itemName : 'بند توريد جديد',
+        total: rowTotal
+      };
+    });
+
+    let globalDiscount = 0;
+    if (globalDiscountType === 'percentage') {
+      globalDiscount = calculatedSubtotal * (globalDiscountValue / 100);
+    } else {
+      globalDiscount = globalDiscountValue;
+    }
+
+    let aggregateTax = 0;
+    finalItems.forEach(item => {
+      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
+    });
+
+    const calculatedGrandTotal = calculatedSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
+
+    const { data, error } = await supabase
+      .from('purchase_invoices')
+      .update({
+        invoice_number: invoiceNumber,
+        date: invoiceDate,
+        issue_date: issueDate,
+        vendor_name: vendor.name,
+        vendor_id: vendor.id,
+        sales_agent: 'أبو ياسر #000001 (أنت)',
+        payment_terms: paymentTerms || 'فوري',
+        items: finalItems,
+        status: alreadyPaid ? 'paid' : status,
+        discount_type: globalDiscountType,
+        discount_value: globalDiscountValue,
+        adjustment: adjustmentValue,
+        subtotal: calculatedSubtotal,
+        total: calculatedGrandTotal,
+        notes: notes,
+        already_paid: alreadyPaid,
+        payment_method: alreadyPaid ? paymentMethod : '',
+        payment_reference: alreadyPaid ? paymentReference : '',
+        currency: currency,
+        billing_template: billingTemplate,
+      })
+      .eq('id', editingInvoiceId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to update invoice', error);
+      alert('حدث خطأ أثناء تحديث الفاتورة.');
+      return;
+    }
+
+    // Update vendor balance
+    const { data: vendorBalData } = await supabase
+      .from('purchase_vendors')
+      .select('opening_balance')
+      .eq('id', vendor.id)
+      .single();
+    const currentBal = Number(vendorBalData?.opening_balance || 0);
+    await supabase
+      .from('purchase_vendors')
+      .update({ opening_balance: currentBal + calculatedGrandTotal })
+      .eq('id', vendor.id);
+
+    // Reload full invoice list
+    setEditingInvoiceId(null);
     setCurrentMode('list');
   };
 
@@ -622,20 +752,28 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                         <td className="p-4 text-left font-mono font-black text-slate-800">
                           {inv.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} {inv.currency}
                         </td>
-                        <td className="p-4 text-center flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setPreviewInvoice(inv)}
-                            className="p-1 px-2.5 hover:bg-slate-100 text-[#0074b1] border border-slate-150 rounded transition-all font-bold cursor-pointer text-[10px]"
-                          >
-                            عرض ومراجعة
-                          </button>
-                          <button
-                            onClick={(e) => handleDeleteInvoice(inv.id, e)}
-                            className="p-1 px-1.5 hover:bg-rose-50 text-rose-600 rounded transition-all cursor-pointer border border-transparent hover:border-rose-150"
-                            title="حذف الفاتورة"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => setPreviewInvoice(inv)}
+                              className="p-1 px-2 hover:bg-slate-100 text-[#0074b1] border border-slate-150 rounded transition-all font-bold cursor-pointer text-[10px]"
+                            >
+                              عرض
+                            </button>
+                            <button
+                              onClick={() => handleEditInvoice(inv)}
+                              className="p-1 px-2 hover:bg-amber-50 text-amber-700 border border-slate-150 rounded transition-all font-bold cursor-pointer text-[10px]"
+                            >
+                              تعديل
+                            </button>
+                            <button
+                              onClick={(e) => handleDeleteInvoice(inv.id, e)}
+                              className="p-1 px-1.5 hover:bg-rose-50 text-rose-600 rounded transition-all cursor-pointer border border-transparent hover:border-rose-150"
+                              title="حذف الفاتورة"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -807,7 +945,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
             <div className="flex items-center gap-1.5 flex-row-reverse text-slate-500 font-extrabold text-[13px]">
               <span className="text-[#0074b1] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>فواتير الشراء</span>
               <span className="text-slate-300">/</span>
-              <span className="text-slate-700 font-black">إضافة</span>
+              <span className="text-slate-700 font-black">{editingInvoiceId ? 'تعديل' : 'إضافة'}</span>
             </div>
 
             {/* Top Bar Action Buttons exactly style: معاينة, حفظ كمسودة, حفظ */}
@@ -822,20 +960,39 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                 <span>معاينة</span>
               </button>
 
-              <button
-                onClick={() => handleSaveInvoice('draft')}
-                className="px-4 py-2 bg-blue-50/70 text-[#0074b1] hover:bg-blue-100 rounded-md border border-blue-200/55 text-xs font-bold transition-all cursor-pointer"
-              >
-                حفظ كمسودة
-              </button>
+              {editingInvoiceId ? (
+                <button
+                  onClick={() => handleUpdateInvoice('draft')}
+                  className="px-4 py-2 bg-blue-50/70 text-[#0074b1] hover:bg-blue-100 rounded-md border border-blue-200/55 text-xs font-bold transition-all cursor-pointer"
+                >
+                  تحديث كمسودة
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSaveInvoice('draft')}
+                  className="px-4 py-2 bg-blue-50/70 text-[#0074b1] hover:bg-blue-100 rounded-md border border-blue-200/55 text-xs font-bold transition-all cursor-pointer"
+                >
+                  حفظ كمسودة
+                </button>
+              )}
 
-              <button
-                onClick={() => handleSaveInvoice('paid')}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-extrabold transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
-              >
-                <Save className="w-4 h-4" />
-                <span>حفظ</span>
-              </button>
+              {editingInvoiceId ? (
+                <button
+                  onClick={() => handleUpdateInvoice('paid')}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-extrabold transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>تحديث</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSaveInvoice('paid')}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-extrabold transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1004,15 +1161,54 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                     {items.map((item, idx) => (
                       <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
                         
-                        {/* Item Name */}
-                        <td className="p-2 text-right">
+                        {/* Item Name with Product Autocomplete */}
+                        <td className="p-2 text-right relative">
                           <input
                             type="text"
                             placeholder="اسم البند أو كود السلعة الموردة"
                             value={item.itemName}
-                            onChange={(e) => handleEditItemCell(item.id, 'itemName', e.target.value)}
+                            onChange={(e) => {
+                              handleEditItemCell(item.id, 'itemName', e.target.value);
+                              setProductSearchText(prev => ({ ...prev, [item.id]: e.target.value }));
+                              setShowProductDropdown(prev => ({ ...prev, [item.id]: true }));
+                            }}
+                            onFocus={() => setShowProductDropdown(prev => ({ ...prev, [item.id]: true }))}
+                            onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [item.id]: false })), 200)}
                             className="w-full text-right p-2 border border-slate-200 rounded font-bold outline-none focus:border-[#0074b1]"
                           />
+                          {showProductDropdown[item.id] && (
+                            <div className="absolute z-20 top-full right-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                              {products.filter(p => {
+                                const q = (productSearchText[item.id] || '').toLowerCase();
+                                return !q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
+                              }).length === 0 ? (
+                                <div className="p-2 text-slate-400 text-xs text-center">لا توجد نتائج</div>
+                              ) : (
+                                products.filter(p => {
+                                  const q = (productSearchText[item.id] || '').toLowerCase();
+                                  return !q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
+                                }).map(product => (
+                                  <div
+                                    key={product.id}
+                                    onMouseDown={() => {
+                                      handleEditItemCell(item.id, 'itemName', product.name);
+                                      handleEditItemCell(item.id, 'unitPrice', product.selling_price);
+                                      handleEditItemCell(item.id, 'product_id', product.id);
+                                      setShowProductDropdown(prev => ({ ...prev, [item.id]: false }));
+                                      setProductSearchText(prev => ({ ...prev, [item.id]: '' }));
+                                    }}
+                                    className="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                                  >
+                                    <div>
+                                      <div className="font-bold text-xs">{product.name}</div>
+                                      {product.code && <div className="text-[10px] text-slate-400">كود: {product.code}</div>}
+                                    </div>
+                                    <div className="text-xs font-mono font-bold text-[#0074b1]">{product.selling_price} ج.م</div>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
                         </td>
 
                         {/* Description */}
@@ -1326,22 +1522,43 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
             <div className="border-t border-slate-100 pt-4 flex justify-between items-center flex-row-reverse">
               
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleSaveInvoice('paid')}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>حفظ وتحرير القيود المالية</span>
-                </button>
+                {editingInvoiceId ? (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateInvoice('paid')}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>تحديث الفاتورة</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveInvoice('paid')}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black transition-all cursor-pointer shadow-sm flex items-center gap-1.5 flex-row-reverse"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>حفظ وتحرير القيود المالية</span>
+                  </button>
+                )}
                 
-                <button
-                  type="button"
-                  onClick={() => handleSaveInvoice('draft')}
-                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
-                >
-                  حفظ الفاتورة كمسودة
-                </button>
+                {editingInvoiceId ? (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateInvoice('draft')}
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  >
+                    تحديث الفاتورة كمسودة
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveInvoice('draft')}
+                    className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  >
+                    حفظ الفاتورة كمسودة
+                  </button>
+                )}
               </div>
 
               <button

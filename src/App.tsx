@@ -18,6 +18,7 @@ import CustomerPaymentsView from './components/CustomerPaymentsView';
 import SalesSettingsView from './components/SalesSettingsView';
 import ClientSettingsView from './components/ClientSettingsView';
 import ProductsServicesView from './components/ProductsServicesView';
+import CompositeProductsView from './components/CompositeProductsView';
 import InventoryVouchersView from './components/InventoryVouchersView';
 import WarehousesView from './components/WarehousesView';
 import PurchaseInvoicesView from './components/PurchaseInvoicesView';
@@ -29,6 +30,7 @@ import FinanceReceiptVouchersView from './components/FinanceReceiptVouchersView'
 import FinanceBankCashSafesView from './components/FinanceBankCashSafesView';
 import AccountsChartView from './components/AccountsChartView';
 import UnifiedReportsView from './components/UnifiedReportsView';
+import SupplierStatementView from './components/SupplierStatementView';
 import ClientDetailView from './components/ClientDetailView';
 import UserManagementView from './components/UserManagementView';
 import LoginView from './components/LoginView';
@@ -67,7 +69,7 @@ function AppContent() {
         'dashboard', 'create-invoice', 'add-client', 'manage-invoices', 'manage-clients',
         'client-settings', 'returned-invoices', 'customer-payments', 'sales-settings',
         'finance-expenses', 'finance-receipt-vouchers', 'finance-bank-cash-safes',
-        'accounts-chart', 'report-unified'
+        'accounts-chart', 'report-unified', 'supplier-statement'
       ].includes(view);
     }
     if (role === 'sales') {
@@ -77,7 +79,7 @@ function AppContent() {
       ].includes(view);
     }
     if (role === 'inventory') {
-      return ['dashboard', 'products-services', 'inventory-vouchers', 'warehouses'].includes(view);
+      return ['dashboard', 'products-services', 'composite-products', 'inventory-vouchers', 'warehouses'].includes(view);
     }
     return false;
   };
@@ -161,6 +163,7 @@ function AppContent() {
               {currentView === 'customer-payments' && <CustomerPaymentsView setView={handleSetView} showToast={showToast} />}
               {currentView === 'sales-settings' && <SalesSettingsView setView={handleSetView} />}
               {currentView === 'products-services' && <ProductsServicesView setView={handleSetView} />}
+              {currentView === 'composite-products' && <CompositeProductsView setView={handleSetView} />}
               {currentView === 'inventory-vouchers' && <InventoryVouchersView setView={handleSetView} />}
               {currentView === 'warehouses' && <WarehousesView setView={handleSetView} />}
               {currentView === 'purchase-invoices' && <PurchaseInvoicesView setView={handleSetView} />}
@@ -175,6 +178,7 @@ function AppContent() {
               {currentView === 'client-detail' && selectedClientId && (
                 <ClientDetailView clientId={selectedClientId} onBack={() => handleSetView('manage-clients')} />
               )}
+              {currentView === 'supplier-statement' && <SupplierStatementView setView={handleSetView} />}
               {currentView === 'user-management' && <UserManagementView setView={handleSetView} />}
             </motion.div>
           </AnimatePresence>

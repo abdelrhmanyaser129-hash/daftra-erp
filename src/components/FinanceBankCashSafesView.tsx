@@ -57,7 +57,6 @@ const mapRowToItem = (row: any): BankAccountOrSafe => ({
 });
 
 const mapItemToRow = (item: BankAccountOrSafe) => ({
-  id: item.id,
   name: item.name,
   type: item.type,
   bank_name: item.bankName,
@@ -171,7 +170,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     const initBal = parseFloat(bankInitialBalance) || 0;
 
     const newBank: BankAccountOrSafe = {
-      id: `bank-${Date.now()}`,
       name: bankAccountName,
       type: 'bank',
       bankName: selectedBankName,
@@ -183,15 +181,16 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
       balance: initBal,
       depositPermission: bankDepositPermission,
       withdrawPermission: bankWithdrawPermission
-    };
+    } as BankAccountOrSafe;
 
-    const { error } = await supabase.from('safes_banks').insert([mapItemToRow(newBank)]);
+    const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(newBank)]).select();
     if (error) {
       console.error('Error inserting bank:', error);
       alert('حدث خطأ أثناء حفظ الحساب البنكي.');
       return;
     }
-    setItems([newBank, ...items]);
+    const savedBank = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...newBank, id: crypto.randomUUID() };
+    setItems([savedBank, ...items]);
     setCurrentMode('list');
   };
 
@@ -204,7 +203,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     const initBal = parseFloat(safeInitialBalance) || 0;
 
     const newSafe: BankAccountOrSafe = {
-      id: `safe-${Date.now()}`,
       name: safeName,
       type: 'safe',
       currency: safeCurrency,
@@ -214,15 +212,16 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
       balance: initBal,
       depositPermission: safeDepositPermission,
       withdrawPermission: safeWithdrawPermission
-    };
+    } as BankAccountOrSafe;
 
-    const { error } = await supabase.from('safes_banks').insert([mapItemToRow(newSafe)]);
+    const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(newSafe)]).select();
     if (error) {
       console.error('Error inserting safe:', error);
       alert('حدث خطأ أثناء حفظ الخزينة.');
       return;
     }
-    setItems([newSafe, ...items]);
+    const savedSafe = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...newSafe, id: crypto.randomUUID() };
+    setItems([savedSafe, ...items]);
     setCurrentMode('list');
   };
 

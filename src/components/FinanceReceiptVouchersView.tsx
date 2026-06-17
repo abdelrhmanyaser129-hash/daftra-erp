@@ -35,6 +35,7 @@ interface ReceiptVoucher {
   taxes: string; // الضرائب
   isRecurring: boolean; // متكرر
   status: 'Draft' | 'Saved';
+  treasuryId?: string; // الخزينة/الحساب البنكي المرتبط
 }
 
 interface FinanceReceiptVouchersViewProps {
@@ -72,19 +73,24 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
   // Selected Voucher View Modal
   const [viewingVoucher, setViewingVoucher] = useState<ReceiptVoucher | null>(null);
 
+  // Edit state / treasury selection
+  const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
+  const [treasuryId, setTreasuryId] = useState('');
+  const [safesBanks, setSafesBanks] = useState<any[]>([]);
+
   // Load initial data from Supabase
   useEffect(() => {
-    const fetchVouchers = async () => {
-      const { data, error } = await supabase
-        .from('receipt_vouchers')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) {
-        console.error('Error fetching receipt vouchers:', error);
+    const fetchData = async () => {
+      const [vouchersRes, safesRes] = await Promise.all([
+        supabase.from('receipt_vouchers').select('*').order('created_at', { ascending: false }),
+        supabase.from('safes_banks').select('id, name, type, currency').order('name'),
+      ]);
+      if (vouchersRes.error) {
+        console.error('Error fetching receipt vouchers:', vouchersRes.error);
         return;
       }
-      if (data) {
-        const mapped = data.map((v: any) => ({
+      if (vouchersRes.data) {
+        const mapped = vouchersRes.data.map((v: any) => ({
           id: v.id,
           code: v.code,
           amount: v.amount,
@@ -97,11 +103,15 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
           taxes: v.taxes,
           isRecurring: v.is_recurring,
           status: v.status,
+          treasuryId: v.treasury_id || '',
         }));
         setVouchers(mapped);
       }
+      if (safesRes.data) {
+        setSafesBanks(safesRes.data);
+      }
     };
-    fetchVouchers();
+    fetchData();
   }, []);
 
   // Generate next code for receipt voucher
@@ -127,6 +137,26 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     setSubAccount('آلي');
     setTaxes('');
     setIsRecurring(false);
+    setAttachmentName(null);
+    setTreasuryId('');
+    setEditingVoucherId(null);
+    setCurrentMode('add');
+    setViewingVoucher(null);
+  };
+
+  const handleOpenEdit = (vouch: ReceiptVoucher) => {
+    setEditingVoucherId(vouch.id);
+    setCode(vouch.code);
+    setAmount(String(vouch.amount));
+    setCurrency(vouch.currency);
+    setDescription(vouch.description);
+    setDate(vouch.date);
+    setSeller(vouch.seller);
+    setCategory(vouch.category);
+    setSubAccount(vouch.subAccount);
+    setTaxes(vouch.taxes);
+    setIsRecurring(vouch.isRecurring);
+    setTreasuryId(vouch.treasuryId || '');
     setAttachmentName(null);
     setCurrentMode('add');
     setViewingVoucher(null);
@@ -161,33 +191,59 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
       alert('الرجاء إدخال مبلغ صحيح لسند القبض أكبر من صفر.');
       return;
     }
-
-    const { data, error } = await supabase
-      .from('receipt_vouchers')
-      .insert({
-        code: code || getNextCode(vouchers),
-        amount: numAmount,
-        currency,
-        description,
-        date,
-        seller: seller || 'بائع مالي عام',
-        category: category || 'إيرادات عامة',
-        sub_account: subAccount,
-        taxes: taxes || 'لا توجد ضرائب',
-        is_recurring: isRecurring,
-        status,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error saving receipt voucher:', error);
-      alert('حدث خطأ أثناء حفظ السند.');
+    if (!treasuryId) {
+      alert('الرجاء اختيار الخزينة أو الحساب البنكي المستلم.');
       return;
     }
 
+    const payload = {
+      code: code || getNextCode(vouchers),
+      amount: numAmount,
+      currency,
+      description,
+      date,
+      seller: seller || 'بائع مالي عام',
+      category: category || 'إيرادات عامة',
+      sub_account: subAccount,
+      taxes: taxes || 'لا توجد ضرائب',
+      is_recurring: isRecurring,
+      treasury_id: treasuryId,
+      status,
+    };
+
+    let data: any;
+
+    if (editingVoucherId) {
+      const { data: updatedData, error } = await supabase
+        .from('receipt_vouchers')
+        .update(payload)
+        .eq('id', editingVoucherId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error updating receipt voucher:', error);
+        alert('حدث خطأ أثناء تحديث السند.');
+        return;
+      }
+      data = updatedData;
+    } else {
+      const { data: insertedData, error } = await supabase
+        .from('receipt_vouchers')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error saving receipt voucher:', error);
+        alert('حدث خطأ أثناء حفظ السند.');
+        return;
+      }
+      data = insertedData;
+    }
+
     if (data) {
-      const newVoucher: ReceiptVoucher = {
+      const mapped: ReceiptVoucher = {
         id: data.id,
         code: data.code,
         amount: data.amount,
@@ -200,9 +256,15 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
         taxes: data.taxes,
         isRecurring: data.is_recurring,
         status: data.status,
+        treasuryId: data.treasury_id || '',
       };
-      setVouchers([newVoucher, ...vouchers]);
+      if (editingVoucherId) {
+        setVouchers(vouchers.map(v => (v.id === editingVoucherId ? mapped : v)));
+      } else {
+        setVouchers([mapped, ...vouchers]);
+      }
     }
+    setEditingVoucherId(null);
     setCurrentMode('list');
   };
 
@@ -416,15 +478,22 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                         <td className="p-4 text-center flex items-center justify-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
+                            onClick={() => handleOpenEdit(vouch)}
+                            className="p-1 px-2 hover:bg-slate-50 text-amber-600 border border-slate-200 rounded text-[11px] font-bold"
+                          >
+                            تعديل
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => setViewingVoucher(vouch)}
                             className="p-1 px-2 hover:bg-slate-50 text-[#0074b1] border border-slate-200 rounded text-[11px] font-bold"
                           >
-                            عرض السند
+                            عرض
                           </button>
                           <button
                             type="button"
                             onClick={(e) => handleDeleteVoucher(vouch.id, e)}
-                            className="p-1 text-rose-500 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded transition-colors"
+                            className="p-1 text-rose-500 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -588,7 +657,7 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
           <div className="flex items-center gap-1.5 flex-row-reverse text-xs text-slate-400 font-extrabold">
             <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>سندات القبض</span>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-800 font-black">إضافة</span>
+            <span className="text-slate-800 font-black">{editingVoucherId ? 'تعديل سند قبض' : 'إضافة'}</span>
           </div>
 
           {/* Screenshot Form elements box wrapper */}
@@ -613,7 +682,7 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                       <option value="EGP">EGP</option>
                       <option value="SAR">SAR</option>
                       <option value="USD">USD</option>
-                      <option value="EUR">USD</option>
+                      <option value="USD">USD</option>
                     </select>
 
                     <input
@@ -674,7 +743,27 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Row 2 matching screenshot layout: Code | Date */}
+              {/* Row 2: Treasury / Bank Account selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+                <div className="space-y-1.5">
+                  <label className="font-extrabold text-slate-650 block text-[11px]">الخزينة / الحساب البنكي <span className="text-rose-500">*</span></label>
+                  <select
+                    value={treasuryId}
+                    onChange={(e) => setTreasuryId(e.target.value)}
+                    className="w-full text-right p-2.5 border border-slate-200 rounded outline-none cursor-pointer font-bold focus:border-[#0074b1]"
+                  >
+                    <option value="">اختر الخزينة أو الحساب البنكي</option>
+                    {safesBanks.map((sb) => (
+                      <option key={sb.id} value={sb.id}>
+                        {sb.name} ({sb.type === 'safe' ? 'خزينة' : 'بنكي'} - {sb.currency})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div />
+              </div>
+
+              {/* Row 3 matching screenshot layout: Code | Date */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                 
                 {/* 4. رقم الكود * (Mandatory Code Field) */}

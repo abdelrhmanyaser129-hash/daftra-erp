@@ -48,7 +48,7 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
   const mapClientRow = (row: any): Client => ({
     id: row.id,
     type: row.type || 'individual',
-    fullName: row.full_name || '',
+    fullName: row.name || row.full_name || '',
     firstName: row.first_name || '',
     lastName: row.last_name || '',
     email: row.email || '',

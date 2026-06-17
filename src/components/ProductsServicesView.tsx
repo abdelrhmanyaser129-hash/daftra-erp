@@ -99,6 +99,10 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
   const [newTags, setNewTags] = useState<string>('');
   const [imgPreview, setImgPreview] = useState<string | null>(null);
 
+  // Edit state
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editProductData, setEditProductData] = useState<Partial<Product> | null>(null);
+
   // Load Products from Supabase
   useEffect(() => {
     supabase.from('products').select('*').order('created_at', { ascending: false }).then(({ data }) => {
@@ -180,6 +184,11 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
     return true;
   });
 
+  const parseTaxValue = (val: string): number => {
+    const n = parseFloat(val);
+    return isNaN(n) ? 0 : n;
+  };
+
   // Action handlers
   const handleOpenAddForm = () => {
     const nextSkuNum = products.length + 1;
@@ -212,6 +221,39 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
     setImgPreview(null);
     
     setIsAddingProduct(true);
+    setEditingProductId(null);
+    setEditProductData(null);
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingProductId(product.id);
+    setEditProductData(product);
+    setNewName(product.name);
+    setNewSku(product.code);
+    setNewCode(product.code);
+    setNewDescription(product.description || '');
+    setNewCategory(product.category);
+    setNewBrand(product.brand);
+    setNewBarcode(product.barcode);
+    setNewIsOnline(product.isOnline ?? true);
+    setNewIsFeatured(product.isFeatured ?? false);
+    setNewPurchasePrice(product.purchasePrice || '');
+    setNewSellingPrice(product.sellingPrice || '');
+    setNewTax1(product.tax1 || 'القيمة المضافة');
+    setNewTax2(product.tax2 || '[اختر ضريبة]');
+    setNewMinSellingPrice(product.minSellingPrice || '');
+    setNewDiscount(product.discount || '');
+    setNewDiscountType(product.discountType || '%');
+    setNewProfitMargin(product.profitMargin || '');
+    setNewTrackInventory(product.trackInventory !== false);
+    setNewAlertQuantity(product.alertQuantity || '0');
+    setNewInternalNotes(product.internalNotes || '');
+    setNewTags(product.tags || '');
+    setNewStatus(product.status);
+    setNewItemType(product.itemType);
+    setNewSupplier(product.supplierId);
+    setImgPreview(null);
+    setIsAddingProduct(true);
   };
 
   const handleAddNewProduct = async (e: React.FormEvent) => {
@@ -235,8 +277,8 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
       is_featured: newIsFeatured || false,
       purchase_price: parseFloat(newPurchasePrice) || 0,
       selling_price: parseFloat(newSellingPrice) || 0,
-      tax1: parseFloat(newTax1) || 0,
-      tax2: parseFloat(newTax2) || 0,
+      tax1: parseTaxValue(newTax1),
+      tax2: parseTaxValue(newTax2),
       discount: parseFloat(newDiscount) || 0,
       discount_type: newDiscountType || '',
       min_selling_price: parseFloat(newMinSellingPrice) || 0,
@@ -252,6 +294,56 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
       const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
       if (data) setProducts(data.map(mapProductRow));
       setIsAddingProduct(false);
+      setEditingProductId(null);
+      setEditProductData(null);
+    } else {
+      alert('فشل الحفظ: ' + error.message);
+    }
+  };
+
+  const handleUpdateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProductId) return;
+    if (!newName.trim()) {
+      alert('الرجاء إدخال اسم المنتج أو الخدمة');
+      return;
+    }
+
+    const row = {
+      name: newName,
+      code: newSku.trim() || newCode.trim() || `PRD-${Math.floor(Math.random() * 90000) + 10000}`,
+      barcode: newBarcode.trim() || `${Math.floor(Math.random() * 9000000000) + 1000000000}`,
+      category: newCategory,
+      brand: newBrand,
+      status: newStatus,
+      item_type: newItemType,
+      supplier_id: newSupplier,
+      description: newDescription || null,
+      is_online: newIsOnline || false,
+      is_featured: newIsFeatured || false,
+      purchase_price: parseFloat(newPurchasePrice) || 0,
+      selling_price: parseFloat(newSellingPrice) || 0,
+      tax1: parseTaxValue(newTax1),
+      tax2: parseTaxValue(newTax2),
+      discount: parseFloat(newDiscount) || 0,
+      discount_type: newDiscountType || '',
+      min_selling_price: parseFloat(newMinSellingPrice) || 0,
+      profit_margin: parseFloat(newProfitMargin) || 0,
+      track_inventory: newTrackInventory !== false,
+      alert_quantity: parseFloat(newAlertQuantity) || 0,
+      internal_notes: newInternalNotes || null,
+      tags: newTags || null,
+    };
+
+    const { error } = await supabase.from('products').update(row).eq('id', editingProductId);
+    if (!error) {
+      const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+      if (data) setProducts(data.map(mapProductRow));
+      setIsAddingProduct(false);
+      setEditingProductId(null);
+      setEditProductData(null);
+    } else {
+      alert('فشل الحفظ: ' + error.message);
     }
   };
 
@@ -261,6 +353,8 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
     if (!error) {
       const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
       if (data) setProducts(data.map(mapProductRow));
+    } else {
+      alert('فشل الحفظ: ' + error.message);
     }
   };
 
@@ -310,7 +404,7 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
           <div className="flex items-center gap-1.5 flex-row-reverse text-sm font-sans tracking-tight text-[#1a252f]">
             <span className="text-[#0074b1] font-bold cursor-pointer hover:underline" onClick={() => setIsAddingProduct(false)}>المنتجات</span>
             <span className="text-slate-400 font-bold">&gt;</span>
-            <span className="text-slate-800 font-bold">إضافة</span>
+            <span className="text-slate-800 font-bold">{editingProductId ? 'تعديل' : 'إضافة'}</span>
           </div>
 
           {/* Top Actions: Green Save Split & Cancel */}
@@ -319,10 +413,10 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
             <div className="flex items-center rounded overflow-hidden shadow-2xs">
               <button
                 type="button"
-                onClick={handleAddNewProduct}
+                onClick={editingProductId ? handleUpdateProduct : handleAddNewProduct}
                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-8 font-bold text-xs transition-all flex items-center justify-center gap-1 cursor-pointer border-l border-[#008d4c]"
               >
-                <span>حفظ</span>
+                <span>{editingProductId ? 'تحديث المنتج' : 'حفظ'}</span>
               </button>
               <button
                 type="button"
@@ -346,7 +440,7 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
         </div>
 
         {/* The Form Content Layout Grid matching image 3 */}
-        <form onSubmit={handleAddNewProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start text-xs text-right select-text font-sans">
+        <form onSubmit={editingProductId ? handleUpdateProduct : handleAddNewProduct} className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start text-xs text-right select-text font-sans">
           
           {/* Right Column: Item details card (تفاصيل البند) - spans 7 grid spaces */}
           <div className="lg:col-span-7 space-y-4">
@@ -789,7 +883,7 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
               type="submit"
               className="px-6 py-2 bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-bold rounded-md transition-colors cursor-pointer"
             >
-              حفظ المنتج الجديد
+              {editingProductId ? 'تحديث المنتج' : 'حفظ المنتج الجديد'}
             </button>
           </div>
 
@@ -1161,6 +1255,7 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                   <th className="p-3">سعر البيع</th>
                   <th className="p-3">نوع البند</th>
                   <th className="p-3">الحالة</th>
+                  <th className="p-3 text-center">تعديل</th>
                   <th className="p-3 text-center">حذف</th>
                 </tr>
               </thead>
@@ -1180,6 +1275,15 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                       }`}>
                         {prod.status}
                       </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <button
+                        onClick={() => handleEditProduct(prod)}
+                        className="text-[#0074b1] hover:text-[#005a8c] hover:bg-blue-50 p-1.5 rounded cursor-pointer inline-block transition-all"
+                        title="تعديل"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
                     </td>
                     <td className="p-3 text-center">
                       <button
