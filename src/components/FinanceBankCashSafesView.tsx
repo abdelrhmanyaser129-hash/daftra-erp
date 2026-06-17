@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -28,17 +23,17 @@ import {
 
 interface BankAccountOrSafe {
   id: string;
-  name: string; // الاسم
-  type: 'safe' | 'bank'; // خزينة أو حساب بنكي
-  bankName?: string; // اسم البنك (للحساب البنكي)
-  accountNumber?: string; // رقم الحساب (للحساب البنكي)
-  currency: string; // العملة
-  status: 'active' | 'inactive'; // نشط أو غير نشط
-  isMain: boolean; // رئيسي
-  description: string; // الوصف
-  balance: number; // الرصيد الحالي
-  depositPermission: string; // صلاحية الإيداع
-  withdrawPermission: string; // صلاحية السحب
+  name: string;
+  type: 'safe' | 'bank';
+  bankName?: string;
+  accountNumber?: string;
+  currency: string;
+  status: 'active' | 'inactive';
+  isMain: boolean;
+  description: string;
+  balance: number;
+  depositPermission: string;
+  withdrawPermission: string;
 }
 
 const mapRowToItem = (row: any): BankAccountOrSafe => ({
@@ -56,7 +51,7 @@ const mapRowToItem = (row: any): BankAccountOrSafe => ({
   withdrawPermission: row.withdraw_permission,
 });
 
-const mapItemToRow = (item: BankAccountOrSafe) => ({
+const mapItemToRow = (item: Partial<BankAccountOrSafe>) => ({
   name: item.name,
   type: item.type,
   bank_name: item.bankName,
@@ -75,17 +70,16 @@ interface FinanceBankCashSafesViewProps {
 }
 
 export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSafesViewProps) {
-  // Modes: 'list' | 'add-bank' | 'add-safe' | 'transfer'
   const [currentMode, setCurrentMode] = useState<'list' | 'add-bank' | 'add-safe' | 'transfer'>('list');
   const [items, setItems] = useState<BankAccountOrSafe[]>([]);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [viewDetailItem, setViewDetailItem] = useState<BankAccountOrSafe | null>(null);
 
-  // Search filters
   const [filterName, setFilterName] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterCurrency, setFilterCurrency] = useState('all');
   const [showFilters, setShowFilters] = useState(true);
 
-  // Form states for Add Bank Account
   const [bankAccountName, setBankAccountName] = useState('');
   const [selectedBankName, setSelectedBankName] = useState('البنك الأهلي المصري');
   const [accountNumber, setAccountNumber] = useState('');
@@ -96,7 +90,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
   const [bankWithdrawPermission, setBankWithdrawPermission] = useState('الكل');
   const [bankInitialBalance, setBankInitialBalance] = useState('0.00');
 
-  // Form states for Add Treasury (Safe)
   const [safeName, setSafeName] = useState('');
   const [safeStatus, setSafeStatus] = useState<'active' | 'inactive'>('active');
   const [safeDescription, setSafeDescription] = useState('');
@@ -105,13 +98,11 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
   const [safeWithdrawPermission, setSafeWithdrawPermission] = useState('الكل');
   const [safeInitialBalance, setSafeInitialBalance] = useState('0.00');
 
-  // Money transfer states
   const [transferFromId, setTransferFromId] = useState('');
   const [transferToId, setTransferToId] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [transferNotes, setTransferNotes] = useState('');
 
-  // Loaded state
   useEffect(() => {
     const fetchItems = async () => {
       const { data, error } = await supabase
@@ -129,11 +120,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     fetchItems();
   }, []);
 
-  const saveToStorage = (updatedList: BankAccountOrSafe[]) => {
-    setItems(updatedList);
-  };
-
   const handleOpenAddBank = () => {
+    setEditingItemId(null);
     setBankAccountName('');
     setSelectedBankName('البنك الأهلي المصري');
     setAccountNumber('');
@@ -147,6 +135,7 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
   };
 
   const handleOpenAddSafe = () => {
+    setEditingItemId(null);
     setSafeName('');
     setSafeStatus('active');
     setSafeDescription('');
@@ -154,6 +143,32 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     setSafeDepositPermission('الكل');
     setSafeWithdrawPermission('الكل');
     setSafeInitialBalance('0.00');
+    setCurrentMode('add-safe');
+  };
+
+  const handleOpenEditBank = (item: BankAccountOrSafe) => {
+    setEditingItemId(item.id);
+    setBankAccountName(item.name);
+    setSelectedBankName(item.bankName || 'البنك الأهلي المصري');
+    setAccountNumber(item.accountNumber || '');
+    setBankCurrency(item.currency);
+    setBankStatus(item.status);
+    setBankDescription(item.description);
+    setBankDepositPermission(item.depositPermission);
+    setBankWithdrawPermission(item.withdrawPermission);
+    setBankInitialBalance(String(item.balance));
+    setCurrentMode('add-bank');
+  };
+
+  const handleOpenEditSafe = (item: BankAccountOrSafe) => {
+    setEditingItemId(item.id);
+    setSafeName(item.name);
+    setSafeStatus(item.status);
+    setSafeDescription(item.description);
+    setSafeCurrency(item.currency);
+    setSafeDepositPermission(item.depositPermission);
+    setSafeWithdrawPermission(item.withdrawPermission);
+    setSafeInitialBalance(String(item.balance));
     setCurrentMode('add-safe');
   };
 
@@ -169,9 +184,9 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
     const initBal = parseFloat(bankInitialBalance) || 0;
 
-    const newBank: BankAccountOrSafe = {
+    const rowData = {
       name: bankAccountName,
-      type: 'bank',
+      type: 'bank' as const,
       bankName: selectedBankName,
       accountNumber: accountNumber,
       currency: bankCurrency,
@@ -180,17 +195,35 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
       description: bankDescription,
       balance: initBal,
       depositPermission: bankDepositPermission,
-      withdrawPermission: bankWithdrawPermission
-    } as BankAccountOrSafe;
+      withdrawPermission: bankWithdrawPermission,
+    };
 
-    const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(newBank)]).select();
-    if (error) {
-      console.error('Error inserting bank:', error);
-      alert('حدث خطأ أثناء حفظ الحساب البنكي.');
-      return;
+    if (editingItemId) {
+      const { data: updatedData, error } = await supabase
+        .from('safes_banks')
+        .update(mapItemToRow(rowData))
+        .eq('id', editingItemId)
+        .select();
+      if (error) {
+        console.error('Error updating bank:', error);
+        alert('حدث خطأ أثناء تحديث الحساب البنكي.');
+        return;
+      }
+      if (updatedData?.[0]) {
+        const updated = mapRowToItem(updatedData[0]);
+        setItems(items.map(i => (i.id === editingItemId ? updated : i)));
+      }
+    } else {
+      const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(rowData)]).select();
+      if (error) {
+        console.error('Error inserting bank:', error);
+        alert('حدث خطأ أثناء حفظ الحساب البنكي.');
+        return;
+      }
+      const savedBank = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...rowData, id: crypto.randomUUID() } as BankAccountOrSafe;
+      setItems([savedBank, ...items]);
     }
-    const savedBank = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...newBank, id: crypto.randomUUID() };
-    setItems([savedBank, ...items]);
+    setEditingItemId(null);
     setCurrentMode('list');
   };
 
@@ -202,26 +235,44 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
     const initBal = parseFloat(safeInitialBalance) || 0;
 
-    const newSafe: BankAccountOrSafe = {
+    const rowData = {
       name: safeName,
-      type: 'safe',
+      type: 'safe' as const,
       currency: safeCurrency,
       status: safeStatus,
-      isMain: items.length === 0, // make main if first
+      isMain: items.length === 0 && !editingItemId,
       description: safeDescription,
       balance: initBal,
       depositPermission: safeDepositPermission,
-      withdrawPermission: safeWithdrawPermission
-    } as BankAccountOrSafe;
+      withdrawPermission: safeWithdrawPermission,
+    };
 
-    const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(newSafe)]).select();
-    if (error) {
-      console.error('Error inserting safe:', error);
-      alert('حدث خطأ أثناء حفظ الخزينة.');
-      return;
+    if (editingItemId) {
+      const { data: updatedData, error } = await supabase
+        .from('safes_banks')
+        .update(mapItemToRow(rowData))
+        .eq('id', editingItemId)
+        .select();
+      if (error) {
+        console.error('Error updating safe:', error);
+        alert('حدث خطأ أثناء تحديث الخزينة.');
+        return;
+      }
+      if (updatedData?.[0]) {
+        const updated = mapRowToItem(updatedData[0]);
+        setItems(items.map(i => (i.id === editingItemId ? updated : i)));
+      }
+    } else {
+      const { data: insertedData, error } = await supabase.from('safes_banks').insert([mapItemToRow(rowData)]).select();
+      if (error) {
+        console.error('Error inserting safe:', error);
+        alert('حدث خطأ أثناء حفظ الخزينة.');
+        return;
+      }
+      const savedSafe = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...rowData, id: crypto.randomUUID() } as BankAccountOrSafe;
+      setItems([savedSafe, ...items]);
     }
-    const savedSafe = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...newSafe, id: crypto.randomUUID() };
-    setItems([savedSafe, ...items]);
+    setEditingItemId(null);
     setCurrentMode('list');
   };
 
@@ -291,13 +342,11 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
       if (!proceed) return;
     }
 
-    // Update balances
     const updated = items.map(i => {
       if (i.id === transferFromId) {
         return { ...i, balance: i.balance - amountNum };
       }
       if (i.id === transferToId) {
-        // Simple conversion simulation if currencies are different
         let addedAmt = amountNum;
         if (source.currency !== i.currency) {
           if (source.currency === 'USD' && i.currency === 'EGP') addedAmt = amountNum * 48;
@@ -328,7 +377,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     setCurrentMode('list');
   };
 
-  // Perform filtration
   const filteredItems = items.filter(i => {
     if (filterName && !i.name.toLowerCase().includes(filterName.toLowerCase()) && !(i.bankName && i.bankName.includes(filterName))) return false;
     if (filterType !== 'all' && i.type !== filterType) return false;
@@ -336,14 +384,17 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     return true;
   });
 
+  const getStatusBadge = (item: BankAccountOrSafe) => {
+    if (item.isMain) return 'الرئيسي';
+    return item.status === 'active' ? 'نشط' : 'معطل';
+  };
+
   return (
     <div id="daftra-finance-bank-cash-safes" className="w-full mx-auto text-right font-sans select-none pb-12 antialiased">
 
-      {/* ----------------- MODE 1: LIST VIEW ----------------- */}
       {currentMode === 'list' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Action Header Nav */}
           <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-xs flex-row-reverse text-xs gap-3">
             <div className="flex items-center gap-1.5 flex-row-reverse text-slate-500 font-bold">
               <span className="text-[#0074b1] hover:underline cursor-pointer" onClick={() => setView('dashboard')}>المالية</span>
@@ -383,7 +434,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
             <p className="text-xs text-slate-400 font-bold">إدارة حسابات النقدية وما يعادلها في الخزائن النقدية، بطاقات الائتمان، والحسابات والودائع البنكية للمؤسسة.</p>
           </div>
 
-          {/* Search Card Exactly matches "بحث وتصفيه" layout */}
           <AnimatePresence>
             {showFilters && (
               <motion.div
@@ -393,8 +443,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                 className="overflow-hidden"
               >
                 <div id="filter-panel-safes" className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 text-xs">
-                  
-                  {/* Title card of filters */}
                   <div className="flex justify-between items-center flex-row-reverse border-b border-slate-100 pb-2.5">
                     <span className="font-extrabold text-[#1a2e40] text-sm">بحث وتصفيه</span>
                     <button
@@ -470,7 +518,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
             )}
           </AnimatePresence>
 
-          {/* Total Summary Row displaying values */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-right">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-1">
               <span className="text-slate-400 font-bold block text-[10px]">إجمالي أرصدة الخزائن</span>
@@ -492,7 +539,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
             </div>
           </div>
 
-          {/* Grid list or empty list state representing Screenshot 8 */}
           {items.length === 0 ? (
             <div className="bg-white py-16 px-6 rounded-xl border border-slate-200 text-center space-y-5">
               <div className="w-16 h-16 bg-[#0074b1]/10 text-[#0074b1] rounded-full flex items-center justify-center mx-auto">
@@ -524,7 +570,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                 <span className="text-slate-450 font-semibold font-mono">طريقة الفرز: الاسم</span>
               </div>
 
-              {/* Table / List layout matching screen 8 closely */}
               <div className="overflow-x-auto text-xs">
                 <table className="w-full text-right">
                   <thead>
@@ -542,7 +587,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     {filteredItems.map((item) => (
                       <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
                         
-                        {/* Name and type representation (Screenshot match "Main Treasury - خزينة") */}
                         <td className="p-4 flex items-center gap-3 flex-row-reverse">
                           <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${item.type === 'safe' ? 'bg-[#fffae6] text-[#b38600] border border-[#ffe699]' : 'bg-[#e2f5ec] text-[#24a148] border border-[#c1ebd1]'}`}>
                             <Landmark className="w-5 h-5" />
@@ -557,55 +601,63 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                           </div>
                         </td>
 
-                        {/* Description */}
                         <td className="p-4 text-slate-500 max-w-xs truncate" title={item.description}>
                           {item.description || 'لا يوجد شرح تفصيلي مكتوب.'}
                         </td>
 
-                        {/* Money Balance (Value block exactly "0.00 ح.م") */}
                         <td className="p-4 text-center">
                           <span className="font-mono text-base font-black text-slate-850">
                             {item.balance.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} {item.currency === 'EGP' ? 'ح.م' : item.currency}
                           </span>
                         </td>
 
-                        {/* Deposit/Withdraw Permissions info */}
                         <td className="p-4 text-center text-slate-500 text-[10px] font-bold">
                           إيداع: {item.depositPermission} | سحب: {item.withdrawPermission}
                         </td>
 
-                        {/* Status (Screenshot 8: blue/grey dot + "الرئيسي" or "نشط" indicator) */}
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center gap-1.5 flex-row-reverse">
                             <span className={`w-2 h-2 rounded-full ${item.status === 'active' ? 'bg-[#0074b1]' : 'bg-red-400'}`}></span>
                             <span className={`text-[10.5px] font-bold ${item.isMain ? 'text-[#0074b1] underline font-black' : 'text-slate-600'}`}>
-                              {item.isMain ? 'الرئيسي' : item.status === 'active' ? 'نشط' : 'معطل'}
+                              {getStatusBadge(item)}
                             </span>
                           </div>
                         </td>
 
-                        {/* Sorting Column exactly "ترتيب" */}
                         <td className="p-4 text-center font-bold text-slate-400 font-mono select-none">
                           ⇅
                         </td>
 
-                        {/* Actions column with three dots menu or inline buttons */}
                         <td className="p-4 text-center">
-                          <div className="flex items-center justify-center gap-2">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => setViewDetailItem(item)}
+                              className="p-1 px-1.5 text-[#0074b1] hover:bg-blue-50 border border-transparent hover:border-blue-200 rounded transition-all cursor-pointer"
+                              title="عرض التفاصيل"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => item.type === 'bank' ? handleOpenEditBank(item) : handleOpenEditSafe(item)}
+                              className="p-1 px-1.5 text-amber-600 hover:bg-amber-50 border border-transparent hover:border-amber-200 rounded transition-all cursor-pointer"
+                              title="تعديل"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
                             {!item.isMain && item.status === 'active' && (
                               <button
                                 onClick={() => handleSetMain(item.id)}
-                                className="px-2 py-1 bg-slate-50 text-[10px] text-slate-500 hover:text-[#0074b1] border border-slate-200 hover:border-[#0074b1]/30 rounded transition-all cursor-pointer font-extrabold"
+                                className="px-1.5 py-1 bg-slate-50 text-[10px] text-slate-500 hover:text-[#0074b1] border border-slate-200 hover:border-[#0074b1]/30 rounded transition-all cursor-pointer font-extrabold"
                               >
                                 ليكون الرئيسي
                               </button>
                             )}
                             <button
                               onClick={(e) => handleDeleteItem(item.id, e)}
-                              className="p-1 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded transition-all cursor-pointer"
+                              className="p-1 px-1.5 text-rose-500 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded transition-all cursor-pointer"
                               title="حذف هذا المقر المحاسبي"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </td>
@@ -621,19 +673,102 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
         </div>
       )}
 
+      {/* View Detail Modal */}
+      {viewDetailItem && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xl w-full text-right overflow-hidden">
+            <div className="p-4 bg-[#f8fafc] border-b border-slate-150 flex justify-between items-center flex-row-reverse text-xs">
+              <span className="text-[#0074b1] font-black">تفاصيل {viewDetailItem.type === 'safe' ? 'الخزينة' : 'الحساب البنكي'}</span>
+              <button
+                onClick={() => setViewDetailItem(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">الاسم</span>
+                  <p className="font-black text-slate-800">{viewDetailItem.name}</p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">النوع</span>
+                  <p className="font-bold text-slate-700">{viewDetailItem.type === 'safe' ? 'خزينة نقدية' : 'حساب بنكي'}</p>
+                </div>
+                {viewDetailItem.bankName && (
+                  <div className="space-y-1">
+                    <span className="text-slate-400 font-bold block">اسم البنك</span>
+                    <p className="font-bold text-slate-700">{viewDetailItem.bankName}</p>
+                  </div>
+                )}
+                {viewDetailItem.accountNumber && (
+                  <div className="space-y-1">
+                    <span className="text-slate-400 font-bold block">رقم الحساب</span>
+                    <p className="font-mono font-bold text-slate-700">{viewDetailItem.accountNumber}</p>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">العملة</span>
+                  <p className="font-bold text-slate-700">{viewDetailItem.currency}</p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">الرصيد الحالي</span>
+                  <p className="font-mono font-black text-lg text-[#0074b1]">
+                    {viewDetailItem.balance.toLocaleString()} {viewDetailItem.currency}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">الحالة</span>
+                  <p className="font-bold text-slate-700">{getStatusBadge(viewDetailItem)}</p>
+                </div>
+              </div>
+              {viewDetailItem.description && (
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">الوصف</span>
+                  <p className="text-slate-600">{viewDetailItem.description}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">صلاحية الإيداع</span>
+                  <p className="font-bold text-slate-700">{viewDetailItem.depositPermission}</p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-slate-400 font-bold block">صلاحية السحب</span>
+                  <p className="font-bold text-slate-700">{viewDetailItem.withdrawPermission}</p>
+                </div>
+              </div>
+              <div className="border-t border-slate-100 pt-4">
+                <button
+                  onClick={() => { setViewDetailItem(null); setView('treasury-transactions'); }}
+                  className="text-[#0074b1] hover:underline font-bold text-xs cursor-pointer"
+                >
+                  عرض حركات الخزينة &larr;
+                </button>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-50 border-t border-slate-150 flex justify-end">
+              <button
+                onClick={() => setViewDetailItem(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded font-bold cursor-pointer text-xs"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* ----------------- MODE 2: ADD BANK ACCOUNT FORM (SCREENSHOT 9 EXACT MATCH) ----------------- */}
       {currentMode === 'add-bank' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Top toolbar: Buttons Left (Cancel, Save dropdown), Save as Draft Title block */}
           <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex-row">
             
-            {/* Left side actions */}
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setCurrentMode('list')}
+                onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}
                 className="px-4 py-2 bg-[#f1f5f9] hover:bg-slate-200 text-slate-707 rounded border border-slate-300 font-bold text-xs flex items-center gap-1.5 flex-row-reverse cursor-pointer transition-all"
               >
                 <X className="w-3.5 h-3.5 text-slate-500" />
@@ -655,7 +790,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
               </div>
             </div>
 
-            {/* Right side title / draft action page */}
             <div>
               <button
                 onClick={handleSaveBank}
@@ -667,17 +801,14 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
           </div>
 
-          {/* Breadcrumb row matching screenshot top bar path representation */}
           <div className="flex items-center gap-1.5 flex-row-reverse text-xs text-slate-400 font-extrabold">
-            <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>خزائن وحسابات بنكية</span>
+            <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}>خزائن وحسابات بنكية</span>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-800 font-black">إضافة حساب بنكي</span>
+            <span className="text-slate-800 font-black">{editingItemId ? 'تعديل حساب بنكي' : 'إضافة حساب بنكي'}</span>
           </div>
 
-          {/* Form container representing screenshot 9 */}
           <div className="bg-[#f8fafc] rounded-xl border border-slate-200 p-8 space-y-6 shadow-xs text-right">
             
-            {/* White card container labeled "تسجيل البيانات" */}
             <div className="bg-white rounded-lg border border-slate-205 shadow-xs text-xs font-semibold overflow-hidden">
               
               <div className="bg-slate-50/80 p-3.5 border-b border-slate-150 font-extrabold text-slate-700 text-[11.5px] block text-right">
@@ -686,10 +817,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="p-6 space-y-5">
                 
-                {/* Row 1: Name (الاسم *) on Right | Type (النوع readonly) on Left */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                   
-                  {/* Name field */}
                   <div className="space-y-1.5">
                     <label className="font-extrabold text-slate-650 block text-[11px]">الاسم <span className="text-rose-500">*</span></label>
                     <input
@@ -702,7 +831,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     />
                   </div>
 
-                  {/* Type Field: Readonly matching screenshot showing Bank Account type icon */}
                   <div className="space-y-1.5 text-right">
                     <label className="font-bold text-slate-450 block text-[10.5px]">النوع</label>
                     <div className="bg-slate-50 border border-slate-150 p-2 text-right rounded font-bold text-slate-600 flex items-center justify-between flex-row-reverse">
@@ -716,10 +844,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
                 </div>
 
-                {/* Row 2: Bank Name (اسم البنك *) on Right | Account Number (رقم الحساب البنكي *) on Left */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                   
-                  {/* Bank Name */}
                   <div className="space-y-1.5">
                     <label className="font-extrabold text-slate-650 block text-[11px]">اسم البنك <span className="text-rose-500">*</span></label>
                     <select
@@ -736,7 +862,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     </select>
                   </div>
 
-                  {/* Account number */}
                   <div className="space-y-1.5">
                     <label className="font-extrabold text-slate-650 block text-[11px]">رقم الحساب البنكي <span className="text-rose-500">*</span></label>
                     <input
@@ -751,10 +876,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
                 </div>
 
-                {/* Row 3: Currency (العملة) on Right | Status (الحالة active/inactive radios) on Left */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                   
-                  {/* Currency */}
                   <div className="space-y-1.5">
                     <label className="font-extrabold text-slate-650 block text-[11px]">العملة</label>
                     <select
@@ -768,7 +891,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     </select>
                   </div>
 
-                  {/* Status (Toggles representing radio buttons exactly as screenshot: نشط / غير نشط) */}
                   <div className="space-y-2">
                     <label className="font-extrabold text-slate-650 block text-[11px]">الحالة</label>
                     <div className="flex gap-4 items-center justify-end">
@@ -800,7 +922,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
                 </div>
 
-                {/* Optional: Starting Balance input */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end border-t border-slate-50 pt-3">
                   <div className="space-y-1.5">
                     <label className="font-extrabold text-slate-650 block text-[11px]">الرصيد الافتتاحي (البداية)</label>
@@ -818,7 +939,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                   </div>
                 </div>
 
-                {/* Description Textarea spanning full width */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">الوصف</label>
                   <textarea
@@ -834,7 +954,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
             </div>
 
-            {/* Permissions Card block matching "الصلاحيات" */}
             <div className="bg-white rounded-lg border border-slate-205 shadow-xs text-xs font-semibold overflow-hidden">
               <div className="bg-slate-50/80 p-3.5 border-b border-slate-150 font-extrabold text-slate-700 text-[11.5px] block text-right">
                 الصلاحيات
@@ -842,7 +961,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {/* Deposit dropdown */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-65 block text-[11px]">إيداع</label>
                   <select
@@ -856,7 +974,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                   </select>
                 </div>
 
-                {/* Withdraw dropdown */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-6 block text-[11px]">سحب</label>
                   <select
@@ -873,7 +990,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
               </div>
             </div>
 
-            {/* Backup bottom standard buttons */}
             <div className="flex justify-start gap-2.5 bg-white p-4 rounded-lg border border-slate-200/80 flex-row">
               <button
                 type="button"
@@ -881,12 +997,12 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                 className="px-6 py-2.5 bg-[#24a148] hover:bg-[#1d8239] text-white rounded text-xs font-black transition-all cursor-pointer shadow-xs flex items-center gap-1 flex-row"
               >
                 <Check className="w-4 h-4" />
-                <span>حفظ الحساب البنكي</span>
+                <span>{editingItemId ? 'تحديث الحساب البنكي' : 'حفظ الحساب البنكي'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setCurrentMode('list')}
+                onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}
                 className="px-5 py-2.5 bg-[#f1f5f9] hover:bg-slate-200 text-slate-700 rounded border border-slate-300 text-xs font-bold transition-all cursor-pointer"
               >
                 الرجوع للقائمة الرئيسية
@@ -898,19 +1014,15 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
         </div>
       )}
 
-
-      {/* ----------------- MODE 3: ADD TREASURY (SAFE) FORM (SCREENSHOT 10 EXACT MATCH) ----------------- */}
       {currentMode === 'add-safe' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Top toolbar block */}
           <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex-row">
             
-            {/* Left Buttons side */}
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setCurrentMode('list')}
+                onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}
                 className="px-4 py-2 bg-[#f1f5f9] hover:bg-slate-200 text-slate-700 rounded border border-slate-300 font-bold text-xs flex items-center gap-1.5 flex-row-reverse cursor-pointer transition-all"
               >
                 <X className="w-3.5 h-3.5 text-slate-500" />
@@ -932,7 +1044,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
               </div>
             </div>
 
-            {/* Right side save draft */}
             <div>
               <button
                 onClick={handleSaveSafe}
@@ -944,17 +1055,14 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
           </div>
 
-          {/* Path Header info */}
           <div className="flex items-center gap-1.5 flex-row-reverse text-xs text-slate-400 font-extrabold">
-            <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>خزائن وحسابات بنكية</span>
+            <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}>خزائن وحسابات بنكية</span>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-800 font-black">إضافة خزينة جديدة</span>
+            <span className="text-slate-800 font-black">{editingItemId ? 'تعديل خزينة' : 'إضافة خزينة جديدة'}</span>
           </div>
 
-          {/* Form wrapper representing screen 10 */}
-          <div className="bg-[#f8fafc] rounded-xl border border-slate-200 p-8 space-y-6 shadow-xs text-right animate-fadeIn">
+          <div className="bg-[#f8fafc] rounded-xl border border-slate-200 p-8 space-y-6 shadow-xs text-right">
             
-            {/* White card container labeled "تسجيل البيانات" */}
             <div className="bg-white rounded-lg border border-slate-205 shadow-xs text-xs font-semibold overflow-hidden">
               
               <div className="bg-slate-50/80 p-3.5 border-b border-slate-150 font-extrabold text-slate-700 text-[11.5px] block text-right">
@@ -963,12 +1071,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="p-6 space-y-5">
                 
-                {/* Row 1 layout matching Screen 10 layout exactly:
-                    Right side: النوع readonly ("خزينة")
-                    Left side: الحالة active/inactive */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                   
-                  {/* Right side: Type */}
                   <div className="space-y-1.5 text-right">
                     <label className="font-bold text-slate-450 block text-[10.5px]">النوع</label>
                     <div className="bg-slate-50 border border-slate-150 p-2 text-right rounded font-bold text-[#0074b1] flex items-center justify-between flex-row-reverse">
@@ -980,7 +1084,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     </div>
                   </div>
 
-                  {/* Left side: Status radio check option */}
                   <div className="space-y-2">
                     <label className="font-extrabold text-slate-650 block text-[11px]">الحالة</label>
                     <div className="flex gap-4 items-center justify-end">
@@ -1012,12 +1115,8 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
                 </div>
 
-                {/* Row 2 layout matching Screen 10:
-                    Right side: "اسم الخزينه *"
-                    Left side: "الوصف" */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
                   
-                  {/* Right: Treasury Name input */}
                   <div className="space-y-4">
                     <div className="space-y-1.5">
                       <label className="font-extrabold text-slate-650 block text-[11px]">اسم الخزينه <span className="text-rose-500">*</span></label>
@@ -1057,7 +1156,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                     </div>
                   </div>
 
-                  {/* Left: Description textarea */}
                   <div className="space-y-1.5 h-full flex flex-col">
                     <label className="font-extrabold text-slate-650 block text-[11px]">الوصف</label>
                     <textarea
@@ -1075,7 +1173,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
             </div>
 
-            {/* Permissions Section block matching Screen 10 */}
             <div className="bg-white rounded-lg border border-slate-205 shadow-xs text-xs font-semibold overflow-hidden">
               <div className="bg-slate-50/80 p-3.5 border-b border-slate-150 font-extrabold text-slate-700 text-[11.5px] block text-right">
                 الصلاحيات
@@ -1083,7 +1180,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {/* Deposit dropdown */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-65 block text-[11px]">إيداع</label>
                   <select
@@ -1097,7 +1193,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                   </select>
                 </div>
 
-                {/* Withdraw dropdown */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-6 block text-[11px]">سحب</label>
                   <select
@@ -1114,7 +1209,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
               </div>
             </div>
 
-            {/* Bottom Form Submit Standard Row */}
             <div className="flex justify-start gap-2.5 bg-white p-4 rounded-lg border border-slate-200/80 flex-row">
               <button
                 type="button"
@@ -1122,12 +1216,12 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                 className="px-6 py-2.5 bg-[#24a148] hover:bg-[#1d8239] text-white rounded text-xs font-black transition-all cursor-pointer shadow-xs flex items-center gap-1 flex-row"
               >
                 <Check className="w-4 h-4" />
-                <span>حفظ الخزينة النقدية</span>
+                <span>{editingItemId ? 'تحديث الخزينة النقدية' : 'حفظ الخزينة النقدية'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setCurrentMode('list')}
+                onClick={() => { setEditingItemId(null); setCurrentMode('list'); }}
                 className="px-5 py-2.5 bg-[#f1f5f9] hover:bg-slate-200 text-slate-700 rounded border border-slate-300 text-xs font-bold transition-all cursor-pointer"
               >
                 الرجوع للقائمة
@@ -1139,8 +1233,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
         </div>
       )}
 
-
-      {/* ----------------- MODE 4: TRANSFER BETWEEN ACCOUNTS VIEW ----------------- */}
       {currentMode === 'transfer' && (
         <div className="space-y-6 animate-fadeIn">
           
@@ -1165,7 +1257,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 
-                {/* Transfer Source */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-rose-600 block text-[11px]">مستوعب الصرف المحاسب (من حساب) <span className="text-rose-500">*</span></label>
                   <select
@@ -1180,7 +1271,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
                   </select>
                 </div>
 
-                {/* Transfer Destination */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-emerald-600 block text-[11px]">مستوعب الإيداع المورث (إلى حساب) <span className="text-rose-500">*</span></label>
                   <select
@@ -1199,7 +1289,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end border-t border-slate-50 pt-4">
                 
-                {/* Transfer Amount */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">قيمة وقدر قيد الحسم المراد تحويله <span className="text-rose-500">*</span></label>
                   <input
@@ -1217,7 +1306,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
               </div>
 
-              {/* Notes */}
               <div className="space-y-1.5 border-t border-slate-50 pt-4">
                 <label className="font-extrabold text-slate-650 block text-[11px]">بيان القيد وتفاصيل الحركة</label>
                 <textarea
@@ -1231,7 +1319,6 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
 
             </div>
 
-            {/* Bottom toolbar */}
             <div className="flex justify-start gap-2.5 bg-white p-4 rounded-lg border border-slate-200/80">
               <button
                 onClick={handleTransfer}

@@ -222,6 +222,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
               >
                 إعدادات العملاء
               </button>
+              <button
+                onClick={() => handleMenuClick('customer-statement')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('customer-statement') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                كشف حساب العميل
+              </button>
             </div>
           </div>}
 
@@ -245,7 +253,7 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
             {/* Inventory Submenu */}
             <div
               className={`bg-slate-50/40 border-r border-[#e9eff4] overflow-hidden transition-all duration-300 space-y-0.5 ${
-                expandedMenus.inventory ? 'max-h-[350px] py-1 opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
+                expandedMenus.inventory ? 'max-h-[400px] py-1 opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
               }`}
             >
               <button
@@ -279,6 +287,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
                 }`}
               >
                 المنتجات المركبة
+              </button>
+              <button
+                onClick={() => handleMenuClick('inventory-movements')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('inventory-movements') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                حركة المخزون
               </button>
 
             </div>
@@ -396,6 +412,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
                 }`}
               >
                 خزائن وحسابات بنكية
+              </button>
+              <button
+                onClick={() => handleMenuClick('treasury-transactions')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('treasury-transactions') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                حركة الخزينة
               </button>
 
             </div>

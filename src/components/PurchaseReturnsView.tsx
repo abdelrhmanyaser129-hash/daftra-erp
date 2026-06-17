@@ -39,7 +39,8 @@ import {
   Coins,
   Receipt,
   FileSpreadsheet,
-  ArrowBigLeftDash
+  ArrowBigLeftDash,
+  Warehouse
 } from 'lucide-react';
 
 // Interfaces for our Purchase Returns
@@ -166,7 +167,16 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
   const [alreadyPaid, setAlreadyPaid] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<string>('نقدي');
   const [paymentReference, setPaymentReference] = useState<string>('');
-  
+
+  // Inventory & Treasury
+  const [products, setProducts] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [safesBanks, setSafesBanks] = useState<any[]>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
+  const [selectedTreasuryId, setSelectedTreasuryId] = useState<string>('');
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
+
   // Calculation variables
   const [subtotal, setSubtotal] = useState<number>(0);
   const [grandTotal, setGrandTotal] = useState<number>(0);
@@ -185,6 +195,10 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
       } else if (returnsData) {
         setPurchaseReturns(returnsData.map(mapReturnFromDB));
       }
+
+      supabase.from('products').select('id, name, code, purchase_price, price').then(({ data }) => { if (data) setProducts(data); });
+      supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
+      supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
 
       const { data: vendorsData, error: vendorsError } = await supabase
         .from('purchase_vendors')
@@ -269,6 +283,8 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
     setAdjustmentValue(0);
     setAlreadyPaid(false);
     setPaymentReference('');
+    setSelectedWarehouseId('');
+    setSelectedTreasuryId('');
     setItems([
       {
         id: 'r-item-1',
@@ -320,6 +336,74 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
     setItems(updated);
   };
 
+  const getFilteredProducts = (query: string) => {
+    if (!query.trim()) return products;
+    const q = query.toLowerCase();
+    return products.filter((p: any) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.code && p.code.toLowerCase().includes(q))
+    );
+  };
+
+  const handleSelectProduct = (itemId: string, product: any) => {
+    setItems(prev =>
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        return {
+          ...item,
+          itemName: product.name,
+          unitPrice: parseFloat(product.purchase_price || product.price || 0)
+        };
+      })
+    );
+    setShowProductDropdown(prev => ({ ...prev, [itemId]: false }));
+    setProductSearchQuery('');
+  };
+
+  const recordInventoryMovement = async (
+    productId: string,
+    warehouseId: string,
+    movementType: string,
+    referenceType: string,
+    referenceId: string,
+    referenceNumber: string,
+    qtyChange: number,
+    createdBy: string
+  ) => {
+    const { data: stock } = await supabase
+      .from('warehouse_stock')
+      .select('quantity')
+      .eq('product_id', productId)
+      .eq('warehouse_id', warehouseId)
+      .maybeSingle();
+
+    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
+    const qtyAfter = qtyBefore + qtyChange;
+
+    await supabase
+      .from('warehouse_stock')
+      .upsert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        quantity: qtyAfter
+      }, { onConflict: 'product_id,warehouse_id' });
+
+    await supabase
+      .from('inventory_movements')
+      .insert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        movement_type: movementType,
+        reference_type: referenceType,
+        reference_id: referenceId,
+        reference_number: referenceNumber,
+        qty_before: qtyBefore,
+        qty_change: qtyChange,
+        qty_after: qtyAfter,
+        created_by: createdBy
+      });
+  };
+
   // Quick Vendor Addition inside form
   const handleAddQuickVendor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,6 +438,11 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
     const vendor = vendors.find(v => v.id === selectedVendorId);
     if (!vendor) {
       alert('الرجاء اختيار المورد أولاً قبل حفظ مرتجع المشتريات.');
+      return;
+    }
+
+    if ((status === 'paid' || alreadyPaid) && !selectedWarehouseId) {
+      alert('الرجاء اختيار المستودع لتسجيل حركة المخزون.');
       return;
     }
 
@@ -409,7 +498,9 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
       payment_method: alreadyPaid ? paymentMethod : '',
       payment_reference: alreadyPaid ? paymentReference : '',
       currency: currency,
-      billing_template: billingTemplate
+      billing_template: billingTemplate,
+      warehouse_id: selectedWarehouseId || null,
+      treasury_id: alreadyPaid ? selectedTreasuryId : null
     }).select().single();
 
     if (error) {
@@ -419,6 +510,55 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
 
     if (data) {
       setPurchaseReturns([mapReturnFromDB(data), ...purchaseReturns]);
+
+      // Record inventory movements
+      if (selectedWarehouseId) {
+        for (const item of finalItems) {
+          const matchedProduct = products.find((p: any) => p.name === item.itemName);
+          if (matchedProduct) {
+            await recordInventoryMovement(
+              matchedProduct.id,
+              selectedWarehouseId,
+              'purchase_return',
+              'purchase_return',
+              data.id,
+              data.return_number,
+              -item.quantity,
+              'أبو ياسر #000001'
+            );
+          }
+        }
+      }
+
+      // Record treasury transaction if already paid
+      if (alreadyPaid && selectedTreasuryId && calculatedGrandTotal > 0) {
+        const { data: treasury } = await supabase
+          .from('safes_banks')
+          .select('balance')
+          .eq('id', selectedTreasuryId)
+          .single();
+
+        const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
+        const newBalance = currentBalance - calculatedGrandTotal;
+
+        await supabase
+          .from('safes_banks')
+          .update({ balance: newBalance })
+          .eq('id', selectedTreasuryId);
+
+        await supabase.from('treasury_transactions').insert({
+          treasury_id: selectedTreasuryId,
+          transaction_type: 'payment_voucher',
+          reference_type: 'purchase_return',
+          reference_id: data.id,
+          reference_number: data.return_number,
+          description: `رد قيمة مرتجع مشتريات ${data.return_number} للمورد ${vendor.name}`,
+          amount: calculatedGrandTotal,
+          balance_before: currentBalance,
+          balance_after: newBalance,
+          created_by: 'أبو ياسر #000001'
+        });
+      }
     }
 
     setCurrentMode('list');
@@ -919,6 +1059,21 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
                     <span>سيقوم مستند المرتجع بعمل تسوية وتنزيل المبالغ الجردية من مخزون المورد.</span>
                   </div>
 
+                  {/* Warehouse Selection */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-600 text-xs block">المستودع <span className="text-rose-500">*</span></label>
+                    <select
+                      value={selectedWarehouseId}
+                      onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                      className="w-full text-right p-2 bg-white border border-slate-200 rounded text-xs font-bold outline-none focus:ring-1 focus:ring-[#0074b1]"
+                    >
+                      <option value="">(اختر المستودع)</option>
+                      {warehouses.map((w: any) => (
+                        <option key={w.id} value={w.id}>{w.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
                 </div>
 
               </div>
@@ -947,14 +1102,37 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
                       <tr key={item.id} className="hover:bg-slate-50/30 transition-colors">
                         
                         {/* Item Name */}
-                        <td className="p-2 text-right">
+                        <td className="p-2 text-right relative">
                           <input
                             type="text"
-                            placeholder="البند"
+                            placeholder="ابحث عن منتج..."
                             value={item.itemName}
-                            onChange={(e) => handleEditItemCell(item.id, 'itemName', e.target.value)}
+                            onChange={(e) => {
+                              handleEditItemCell(item.id, 'itemName', e.target.value);
+                              setProductSearchQuery(e.target.value);
+                              setShowProductDropdown(prev => ({ ...prev, [item.id]: true }));
+                            }}
+                            onFocus={() => setShowProductDropdown(prev => ({ ...prev, [item.id]: true }))}
+                            onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [item.id]: false })), 200)}
                             className="w-full text-right p-2 border border-slate-200 rounded font-bold outline-none focus:border-[#0074b1]"
                           />
+                          {showProductDropdown[item.id] && (
+                            <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                              {getFilteredProducts(productSearchQuery).map((p: any) => (
+                                <div
+                                  key={p.id}
+                                  onMouseDown={() => handleSelectProduct(item.id, p)}
+                                  className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between"
+                                >
+                                  <span className="font-bold text-slate-700">{p.name}</span>
+                                  <span className="text-slate-400">{p.code} - {parseFloat(p.purchase_price || p.price || 0).toLocaleString()} ج.م</span>
+                                </div>
+                              ))}
+                              {getFilteredProducts(productSearchQuery).length === 0 && (
+                                <div className="px-3 py-2 text-xs text-slate-400 text-center">لا توجد نتائج</div>
+                              )}
+                            </div>
+                          )}
                         </td>
 
                         {/* Description */}
@@ -1237,6 +1415,19 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
                       className="w-full p-2 bg-white border border-slate-200 rounded text-xs font-bold font-mono text-right"
                     />
                   </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-500 block font-bold">الخزنة / الحساب البنكي</label>
+                  <select
+                    value={selectedTreasuryId}
+                    onChange={(e) => setSelectedTreasuryId(e.target.value)}
+                    className="w-full p-2 bg-white border border-slate-200 rounded text-xs font-bold"
+                  >
+                    <option value="">(اختر الخزنة)</option>
+                    {safesBanks.map((sb: any) => (
+                      <option key={sb.id} value={sb.id}>{sb.name} ({sb.type === 'safe' ? 'خزنة' : 'بنك'})</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}

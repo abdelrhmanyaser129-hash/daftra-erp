@@ -20,6 +20,7 @@ import ClientSettingsView from './components/ClientSettingsView';
 import ProductsServicesView from './components/ProductsServicesView';
 import CompositeProductsView from './components/CompositeProductsView';
 import InventoryVouchersView from './components/InventoryVouchersView';
+import InventoryMovementsView from './components/InventoryMovementsView';
 import WarehousesView from './components/WarehousesView';
 import PurchaseInvoicesView from './components/PurchaseInvoicesView';
 import PurchaseReturnsView from './components/PurchaseReturnsView';
@@ -28,9 +29,11 @@ import PurchaseVendorPaymentsView from './components/PurchaseVendorPaymentsView'
 import FinanceExpensesView from './components/FinanceExpensesView';
 import FinanceReceiptVouchersView from './components/FinanceReceiptVouchersView';
 import FinanceBankCashSafesView from './components/FinanceBankCashSafesView';
+import TreasuryTransactionsView from './components/TreasuryTransactionsView';
 import AccountsChartView from './components/AccountsChartView';
 import UnifiedReportsView from './components/UnifiedReportsView';
 import SupplierStatementView from './components/SupplierStatementView';
+import CustomerStatementView from './components/CustomerStatementView';
 import ClientDetailView from './components/ClientDetailView';
 import UserManagementView from './components/UserManagementView';
 import LoginView from './components/LoginView';
@@ -69,7 +72,7 @@ function AppContent() {
         'dashboard', 'create-invoice', 'add-client', 'manage-invoices', 'manage-clients',
         'client-settings', 'returned-invoices', 'customer-payments', 'sales-settings',
         'finance-expenses', 'finance-receipt-vouchers', 'finance-bank-cash-safes',
-        'accounts-chart', 'report-unified', 'supplier-statement'
+        'treasury-transactions', 'accounts-chart', 'report-unified', 'supplier-statement', 'customer-statement'
       ].includes(view);
     }
     if (role === 'sales') {
@@ -165,6 +168,7 @@ function AppContent() {
               {currentView === 'products-services' && <ProductsServicesView setView={handleSetView} />}
               {currentView === 'composite-products' && <CompositeProductsView setView={handleSetView} />}
               {currentView === 'inventory-vouchers' && <InventoryVouchersView setView={handleSetView} />}
+              {currentView === 'inventory-movements' && <InventoryMovementsView setView={handleSetView} />}
               {currentView === 'warehouses' && <WarehousesView setView={handleSetView} />}
               {currentView === 'purchase-invoices' && <PurchaseInvoicesView setView={handleSetView} />}
               {currentView === 'purchase-returns' && <PurchaseReturnsView setView={handleSetView} />}
@@ -173,12 +177,14 @@ function AppContent() {
               {currentView === 'finance-expenses' && <FinanceExpensesView setView={handleSetView} />}
               {currentView === 'finance-receipt-vouchers' && <FinanceReceiptVouchersView setView={handleSetView} />}
               {currentView === 'finance-bank-cash-safes' && <FinanceBankCashSafesView setView={handleSetView} />}
+              {currentView === 'treasury-transactions' && <TreasuryTransactionsView setView={handleSetView} />}
               {currentView === 'accounts-chart' && <AccountsChartView setView={handleSetView} />}
               {currentView === 'report-unified' && <UnifiedReportsView setView={handleSetView} />}
               {currentView === 'client-detail' && selectedClientId && (
                 <ClientDetailView clientId={selectedClientId} onBack={() => handleSetView('manage-clients')} />
               )}
               {currentView === 'supplier-statement' && <SupplierStatementView setView={handleSetView} />}
+              {currentView === 'customer-statement' && <CustomerStatementView setView={handleSetView} />}
               {currentView === 'user-management' && <UserManagementView setView={handleSetView} />}
             </motion.div>
           </AnimatePresence>

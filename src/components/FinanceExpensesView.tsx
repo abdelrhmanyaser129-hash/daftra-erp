@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,37 +17,32 @@ import {
   Eye,
   Tag,
   Briefcase,
-  Users,
-  Percent,
   RefreshCw,
   Search,
   Sliders
 } from 'lucide-react';
 
-interface Vendor {
-  id: string;
-  name: string;
-  company: string;
-  phone: string;
-  email: string;
-}
-
 interface Expense {
   id: string;
-  code: string; // رقم الكود
-  amount: number; // المبلغ
-  currency: string; // العملة
-  description: string; // الوصف
-  date: string; // التاريخ
-  unit: string; // الوحدة
-  seller: string; // البائع
-  category: string; // التصنيف
-  subAccount: string; // الحساب الفرعي
-  vendorId: string; // المورد المرتبط
-  vendorName: string;
-  taxes: string; // الضرائب
-  isRecurring: boolean; // متكرر
+  code: string;
+  amount: number;
+  currency: string;
+  description: string;
+  date: string;
+  category: string;
+  subAccount: string;
+  taxes: string;
+  isRecurring: boolean;
   status: 'Draft' | 'Saved';
+  treasuryId?: string;
+}
+
+interface SafeBank {
+  id: string;
+  name: string;
+  type: string;
+  currency: string;
+  balance: number;
 }
 
 interface FinanceExpensesViewProps {
@@ -66,84 +56,59 @@ const mapExpense = (db: any): Expense => ({
   currency: db.currency,
   description: db.description,
   date: db.date,
-  unit: db.unit,
-  seller: db.seller,
   category: db.category,
   subAccount: db.sub_account,
-  vendorId: db.vendor_id,
-  vendorName: db.vendor_name,
   taxes: db.taxes,
   isRecurring: db.is_recurring,
   status: db.status as 'Draft' | 'Saved',
+  treasuryId: db.treasury_id || '',
 });
 
 export default function FinanceExpensesView({ setView }: FinanceExpensesViewProps) {
-  // Modes: 'list' | 'add'
   const [currentMode, setCurrentMode] = useState<'list' | 'add'>('list');
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [safesBanks, setSafesBanks] = useState<SafeBank[]>([]);
 
-  // Search filter states for list page
   const [filterCode, setFilterCode] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Form states for Add Expense
   const [amount, setAmount] = useState('0.00');
   const [currency, setCurrency] = useState('EGP');
   const [description, setDescription] = useState('');
   const [code, setCode] = useState('');
   const [date, setDate] = useState('2026-06-14');
-  const [unit, setUnit] = useState('Select Unit');
-  const [seller, setSeller] = useState('');
   const [category, setCategory] = useState('');
   const [subAccount, setSubAccount] = useState('آلي');
-  const [selectedVendorId, setSelectedVendorId] = useState('');
+  const [treasuryId, setTreasuryId] = useState('');
   const [taxes, setTaxes] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
 
-  // Attachment upload simulation
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Selected Expense View Modal
   const [viewingExpense, setViewingExpense] = useState<Expense | null>(null);
 
-  // Load initial data
   useEffect(() => {
-    // Load vendors for dropdown
-    const localVendors = localStorage.getItem('daftra_vendors');
-    if (localVendors) {
-      try {
-        setVendors(JSON.parse(localVendors));
-      } catch (e) {
-        console.error('Error parsing vendors:', e);
+    const loadData = async () => {
+      const [expensesRes, safesRes] = await Promise.all([
+        supabase.from('expenses').select('*').order('created_at', { ascending: false }),
+        supabase.from('safes_banks').select('id, name, type, currency, balance').order('name'),
+      ]);
+      if (expensesRes.error) {
+        console.error('Error loading expenses:', expensesRes.error);
+      } else if (expensesRes.data) {
+        setExpenses(expensesRes.data.map(mapExpense));
       }
-    } else {
-      // Mock vendors if none exist
-      const mockVendors = [
-        { id: 'v-1', name: 'الشركة العربية للتوريدات', company: 'العربية', phone: '010023455', email: 'arab@corp.com' },
-        { id: 'v-2', name: 'مؤسسة الرياض التجارية', company: 'الرياض ميديا', phone: '011232321', email: 'contact@riyadh.sa' }
-      ];
-      setVendors(mockVendors);
-      localStorage.setItem('daftra_vendors', JSON.stringify(mockVendors));
-    }
-
-    // Load expenses from Supabase
-    const loadExpenses = async () => {
-      const { data, error } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
-      if (error) {
-        console.error('Error loading expenses:', error);
-      } else if (data) {
-        setExpenses(data.map(mapExpense));
+      if (safesRes.data) {
+        setSafesBanks(safesRes.data);
       }
     };
-    loadExpenses();
+    loadData();
   }, []);
 
-  // Generate next code for expense
   const getNextCode = (list: Expense[]) => {
     if (list.length === 0) return '000001';
     const codes = list.map(e => {
@@ -161,11 +126,9 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
     setCurrency('EGP');
     setDescription('');
     setDate('2026-06-14');
-    setUnit('Select Unit');
-    setSeller('');
     setCategory('');
     setSubAccount('آلي');
-    setSelectedVendorId('');
+    setTreasuryId('');
     setTaxes('');
     setIsRecurring(false);
     setAttachmentName(null);
@@ -202,29 +165,39 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
       alert('الرجاء إدخال قيمة للمصروف أكبر من صفر.');
       return;
     }
-
-    let vendorName = 'بدون مورد مرتبط';
-    if (selectedVendorId) {
-      const found = vendors.find(v => v.id === selectedVendorId);
-      if (found) {
-        vendorName = found.name;
-      }
+    if (!treasuryId) {
+      alert('الرجاء اختيار الخزينة أو الحساب البنكي.');
+      return;
     }
 
+    // Get current treasury balance
+    const { data: treasuryData, error: treasuryError } = await supabase
+      .from('safes_banks')
+      .select('balance')
+      .eq('id', treasuryId)
+      .single();
+
+    if (treasuryError || !treasuryData) {
+      console.error('Error fetching treasury balance:', treasuryError);
+      alert('حدث خطأ أثناء جلب رصيد الخزينة.');
+      return;
+    }
+
+    const currentBalance = Number(treasuryData.balance);
+    const newBalance = currentBalance - numAmount;
+
+    // Insert expense record
     const { data, error } = await supabase.from('expenses').insert({
       code: code || getNextCode(expenses),
       amount: numAmount,
       currency,
       description,
       date,
-      unit: unit === 'Select Unit' ? 'الفرع الافتراضي' : unit,
-      seller: seller || 'بائع مالي عام',
       category: category || 'مصروفات تشغيلية عامة',
       sub_account: subAccount,
-      vendor_id: selectedVendorId,
-      vendor_name: vendorName,
       taxes: taxes || 'لا توجد ضرائب',
       is_recurring: isRecurring,
+      treasury_id: treasuryId,
       status
     }).select().single();
 
@@ -232,6 +205,37 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
       console.error('Error saving expense:', error);
       alert('حدث خطأ أثناء حفظ المصروف.');
       return;
+    }
+
+    // Update treasury balance
+    const { error: updateError } = await supabase
+      .from('safes_banks')
+      .update({ balance: newBalance })
+      .eq('id', treasuryId);
+
+    if (updateError) {
+      console.error('Error updating treasury balance:', updateError);
+      alert('حدث خطأ أثناء تحديث رصيد الخزينة.');
+      return;
+    }
+
+    // Insert treasury_transactions record
+    const { error: transError } = await supabase.from('treasury_transactions').insert({
+      treasury_id: treasuryId,
+      transaction_type: 'expense',
+      reference_type: 'expense',
+      reference_id: data.id,
+      reference_number: data.code,
+      description: `مصروف: ${description || 'مصروف تشغيلي'}`,
+      amount: numAmount,
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      created_by: 'system',
+      created_at: new Date().toISOString(),
+    });
+
+    if (transError) {
+      console.error('Error inserting treasury transaction:', transError);
     }
 
     if (data) {
@@ -253,7 +257,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
     }
   };
 
-  // Filtering calculations
   const filteredExpenses = expenses.filter(exp => {
     if (filterCode && !exp.code.includes(filterCode)) return false;
     if (filterCategory !== 'all' && exp.category !== filterCategory) return false;
@@ -262,17 +265,19 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
     return true;
   });
 
-  // Extract unique categories for filter dropdown
   const uniqueCategories = Array.from(new Set(expenses.map(e => e.category).filter(Boolean)));
+
+  const getTreasuryName = (id: string) => {
+    const found = safesBanks.find(sb => sb.id === id);
+    return found ? found.name : id;
+  };
 
   return (
     <div id="daftra-finance-expenses-container" className="w-full mx-auto text-right font-sans select-none pb-12 antialiased">
       
-      {/* ----------------- MODE 1: EXPENSES LIST VIEW ----------------- */}
       {currentMode === 'list' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Action Header Nav */}
           <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-xs flex-row-reverse text-xs gap-3">
             <div className="flex items-center gap-1.5 flex-row-reverse text-slate-500 font-bold">
               <span className="text-[#0074b1] hover:underline cursor-pointer" onClick={() => setView('dashboard')}>المالية</span>
@@ -305,7 +310,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
             <p className="text-xs text-slate-400 font-bold">متابعة وتسجيل كافة المدفوعات والبنود المخصومة من الحسابات العامة وفروع المنشأة.</p>
           </div>
 
-          {/* Collapsible search filtration panel */}
           <AnimatePresence>
             {showFilters && (
               <motion.div
@@ -377,9 +381,7 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
             )}
           </AnimatePresence>
 
-          {/* List contents conditional display */}
           {expenses.length === 0 ? (
-            /* EMPTY STATE with customized UI and big center button */
             <div id="expenses-empty-state" className="bg-white py-16 px-6 rounded-xl border border-slate-200 shadow-xs flex flex-col items-center justify-center text-center space-y-6">
               <div className="w-20 h-20 bg-rose-50 border border-rose-100 text-rose-500 rounded-full flex items-center justify-center">
                 <FileText className="w-10 h-10" />
@@ -394,7 +396,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                 </p>
               </div>
 
-              {/* Big, clean "سند صرف / إضافة مصروف" Action button */}
               <button
                 type="button"
                 onClick={handleOpenAdd}
@@ -405,7 +406,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
               </button>
             </div>
           ) : (
-            /* TABLE VIEW OF CURRENT STORAGE */
             <div className="bg-white rounded-xl border border-slate-205 shadow-xs overflow-hidden">
               <div className="bg-slate-50/70 p-4 border-b border-slate-150 text-right">
                 <span className="text-xs font-bold text-slate-700">سندات المصروفات المقيدة</span>
@@ -419,8 +419,7 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                       <th className="p-4">التاريخ</th>
                       <th className="p-4">التصنيف البندي</th>
                       <th className="p-4">الوصف التشغيلي</th>
-                      <th className="p-4">البائع المستلم</th>
-                      <th className="p-4 text-center">المورد التابع</th>
+                      <th className="p-4">الخزينة/الحساب</th>
                       <th className="p-4 text-left">قيمة المصروف</th>
                       <th className="p-4 text-center">الإجراءات</th>
                     </tr>
@@ -442,9 +441,8 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                         <td className="p-4 max-w-xs truncate text-slate-500" title={exp.description}>
                           {exp.description || '—'}
                         </td>
-                        <td className="p-4 text-slate-800">{exp.seller}</td>
-                        <td className="p-4 text-center text-slate-500">
-                          {exp.vendorName}
+                        <td className="p-4 text-slate-500">
+                          {exp.treasuryId ? getTreasuryName(exp.treasuryId) : '—'}
                         </td>
                         <td className="p-4 text-left font-mono font-black text-[#1a2e40] text-sm">
                           {exp.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} {exp.currency}
@@ -476,15 +474,12 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
         </div>
       )}
 
-
-      {/* ----------------- MODE 2: DETAILED SLIP DIALOG / MODAL ----------------- */}
       {viewingExpense && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn">
           <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xl w-full text-right overflow-hidden flex flex-col">
             
-            {/* Modal path representation */}
             <div className="p-4 bg-[#f8fafc] border-b border-slate-150 flex justify-between items-center flex-row-reverse text-xs">
-              <span className="text-[#0074b1] font-black">تفاصيل مستند الصرف المصروفي #{viewingExpense.code}</span>
+              <span className="text-[#0074b1] font-black">تفاصيل مستند الصرف #{viewingExpense.code}</span>
               <button
                 onClick={() => setViewingExpense(null)}
                 className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
@@ -493,42 +488,38 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
               </button>
             </div>
 
-            {/* Receipt body contents */}
             <div className="p-6 space-y-4">
               
               <div className="flex justify-between items-start flex-row-reverse border-b border-slate-100 pb-3">
                 <div className="space-y-1">
-                  <span className="text-slate-400 font-bold block text-[10px]">البائع المستحق:</span>
-                  <p className="text-base font-black text-slate-800 block">{viewingExpense.seller}</p>
-                </div>
-                <div className="text-left space-y-1">
-                  <span className="text-slate-400 font-bold block text-[10px]">رمز تصنيف البند:</span>
+                  <span className="text-slate-400 font-bold block text-[10px]">التصنيف:</span>
                   <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded text-[11px] font-extrabold border border-purple-100 inline-block">
                     {viewingExpense.category}
                   </span>
                 </div>
+                <div className="text-left space-y-1">
+                  <span className="text-slate-400 font-bold block text-[10px]">رمز تصنيف البند:</span>
+                  <span className="font-mono text-slate-900 font-bold">{viewingExpense.code}</span>
+                </div>
               </div>
 
-              {/* Specs detailed card lists */}
               <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
                 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded space-y-1 text-right">
                   <span className="text-slate-450 block font-bold text-[10px]">تفاصيل الدورة المالية</span>
                   <p className="text-slate-700">رقم الكود المحاسبي: <span className="font-mono text-slate-900 font-bold">{viewingExpense.code}</span></p>
                   <p className="text-slate-700">تاريخ صرف السند: <span className="font-mono text-slate-900 font-bold">{viewingExpense.date}</span></p>
-                  <p className="text-slate-700">المقيد بمؤسسة فرعية: <span className="text-slate-800 font-bold">{viewingExpense.unit}</span></p>
+                  <p className="text-slate-700">الخزينة/الحساب: <span className="text-slate-800 font-bold">{viewingExpense.treasuryId ? getTreasuryName(viewingExpense.treasuryId) : '—'}</span></p>
                 </div>
 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded space-y-1 text-right">
                   <span className="text-slate-450 block font-bold text-[10px]">التحكم والروابط الإضافية</span>
                   <p className="text-slate-700">الحساب الرئيسي: <span className="text-slate-800 font-bold">الحسابات الفرعية &larr; {viewingExpense.subAccount}</span></p>
-                  <p className="text-slate-700">المورد المحاسب: <span className="text-slate-900 font-bold">{viewingExpense.vendorName}</span></p>
                   <p className="text-slate-700">الضريبة المطبقة: <span className="text-slate-650 font-bold">{viewingExpense.taxes}</span></p>
                 </div>
 
               </div>
 
-              {/* Big display for total amount */}
               <div className="bg-[#f0f9ff]/50 p-4 border border-[#0074b1]/30 rounded-lg text-center space-y-0.5">
                 <span className="text-slate-400 font-bold block text-[10px]">القيمة المقيدة المخصومة</span>
                 <span className="text-3xl font-black text-[#0074b1] font-mono leading-none block">
@@ -539,7 +530,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                 </span>
               </div>
 
-              {/* Description explanation notes block */}
               {viewingExpense.description && (
                 <div className="bg-slate-50 p-3 rounded border border-slate-205 text-xs select-text">
                   <span className="font-black text-slate-850 block mb-1">📝 وصف توضيحي للمصروف:</span>
@@ -549,7 +539,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
             </div>
 
-            {/* Bottom Actions footer bar */}
             <div className="p-4 bg-slate-50 border-t border-slate-150 flex justify-between items-center text-xs">
               <button
                 type="button"
@@ -572,17 +561,12 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
         </div>
       )}
 
-
-      {/* ----------------- MODE 3: ADD EXPENSE FORM VIEW (SCREENSHOT EXACT MATCH) ----------------- */}
       {currentMode === 'add' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Top Form Toolbar: Cancel | Save Dropdown (Left) , Save as Draft (Right) */}
           <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex-row">
             
-            {/* Left: Cancel Button and Save Menu */}
             <div className="flex items-center gap-2">
-              {/* cancel button (grey text with small gray background, 'X' icon) */}
               <button
                 type="button"
                 onClick={() => setCurrentMode('list')}
@@ -592,7 +576,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                 <span>إلغاء</span>
               </button>
 
-              {/* save button (green with check icon and dropdown button) */}
               <div className="relative inline-flex">
                 <button
                   type="submit"
@@ -608,7 +591,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
               </div>
             </div>
 
-            {/* Right: Save as Draft title */}
             <div className="flex">
               <button
                 type="button"
@@ -621,27 +603,21 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
           </div>
 
-          {/* Form Breadcrumb Row resembling screenshot hierarchy */}
           <div className="flex items-center gap-1.5 flex-row-reverse text-xs text-slate-400 font-extrabold">
             <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>المصروفات</span>
             <span className="text-slate-300 font-normal">/</span>
             <span className="text-slate-800 font-black">إضافة</span>
           </div>
 
-          {/* Screenshot Form Container card */}
           <div className="bg-[#f8fafc] rounded-xl border border-slate-200 p-8 space-y-6 shadow-xs">
             
-            {/* Major grid rows matching the input boxes inside the white inner area */}
             <div className="bg-white p-6 rounded-lg border border-slate-205 shadow-xs space-y-5 text-right text-xs font-semibold">
               
-              {/* Row 1 matching the top element grid: Amount, description & Attachments */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
                 
-                {/* 1. المبلغ (Amount) - Right side (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">المبلغ</label>
                   <div className="flex rounded border border-slate-200 bg-white overflow-hidden focus-within:border-[#0074b1]">
-                    {/* Currency selection element */}
                     <select
                       value={currency}
                       onChange={(e) => setCurrency(e.target.value)}
@@ -666,7 +642,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                   </div>
                 </div>
 
-                {/* 2. الوصف (Description) - Middle (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">الوصف</label>
                   <textarea
@@ -678,7 +653,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                   />
                 </div>
 
-                {/* 3. المرفقات (Attachments) - Left side (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px] text-right">المرفقات</label>
                   <div
@@ -711,10 +685,8 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
               </div>
 
-              {/* Row 2 matching screenshot layout: Code | Date | Unit */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                 
-                {/* 4. رقم الكود * (Code Number) - Mandatory with red asterisk */}
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center flex-row-reverse text-[11px]">
                     <span className="font-extrabold text-slate-650 block">رقم الكود <span className="text-rose-500">*</span></span>
@@ -731,7 +703,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                   />
                 </div>
 
-                {/* 5. التاريخ (Date) */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">التاريخ</label>
                   <input
@@ -743,43 +714,26 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                   />
                 </div>
 
-                {/* 6. الوحدة (Unit) */}
                 <div className="space-y-1.5">
-                  <label className="font-extrabold text-slate-650 block text-[11px]">الوحدة</label>
+                  <label className="font-extrabold text-slate-650 block text-[11px]">الخزينة / الحساب البنكي <span className="text-rose-500">*</span></label>
                   <select
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
+                    value={treasuryId}
+                    onChange={(e) => setTreasuryId(e.target.value)}
                     className="w-full text-right p-2 border border-slate-200 rounded outline-none cursor-pointer font-bold focus:border-[#0074b1]"
                   >
-                    <option value="Select Unit">Select Unit</option>
-                    <option value="الفرع الرئيسي">الفرع الرئيسي</option>
-                    <option value="فرع الرياض">فرع الرياض</option>
-                    <option value="المستودع الرئيسي">المستودع الرئيسي</option>
+                    <option value="">اختر الخزينة أو الحساب البنكي</option>
+                    {safesBanks.map((sb) => (
+                      <option key={sb.id} value={sb.id}>
+                        {sb.name} ({sb.type === 'safe' ? 'خزينة' : 'بنكي'} - {sb.currency})
+                      </option>
+                    ))}
                   </select>
                 </div>
 
               </div>
 
-              {/* Row 3 matching screenshot: Seller | Category */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                 
-                {/* 7. البائع (Seller) */}
-                <div className="space-y-1.5">
-                  <label className="font-extrabold text-slate-650 block text-[11px]">البائع</label>
-                  <select
-                    value={seller}
-                    onChange={(e) => setSeller(e.target.value)}
-                    className="w-full text-right p-2.5 border border-slate-205 rounded outline-none cursor-pointer focus:border-[#0074b1]"
-                  >
-                    <option value="">إختر البائع او المستحق</option>
-                    <option value="شركة الغاز">شركة الغاز الطبيعي</option>
-                    <option value="إدارة العقار">إدارة مالك العقار المالي</option>
-                    <option value="شركة الكهرباء الوطنية">شركة الكهرباء الوطنية</option>
-                    <option value="مكتبة الفاروق الكبرى">مكتبة الفاروق الكبرى</option>
-                  </select>
-                </div>
-
-                {/* 8. التصنيف (Category) */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">التصنيف</label>
                   <select
@@ -796,63 +750,8 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
                   </select>
                 </div>
 
-              </div>
-
-              {/* Row 4: Sub-account | Vendor selection with links and options */}
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end border-t border-slate-100 pt-4">
-                
-                {/* 9. الحساب الفرعي (Sub-account) - Cols 4 */}
-                <div className="md:col-span-4 space-y-1.5">
-                  <label className="font-extrabold text-slate-650 block text-[11px]">الحساب الفرعي</label>
-                  <select
-                    value={subAccount}
-                    onChange={(e) => setSubAccount(e.target.value)}
-                    className="w-full text-right p-2.5 bg-slate-50 border border-slate-200 rounded font-bold outline-none text-slate-600 text-[11px]"
-                  >
-                    <option value="آلي">آلي (توليد محاسبي ذكي)</option>
-                    <option value="حساب مصاريف التشغيل">حساب مصاريف التشغيل #501</option>
-                    <option value="حساب مصاريف إدارية وعمومية">حساب مصاريف إدارية وعمومية #502</option>
-                  </select>
-                </div>
-
-                {/* 10. المورد (Vendor) - with a small blue '+ جديد' button and a 'متعدد' toggle - Cols 4 */}
-                <div className="md:col-span-4 space-y-1.5">
-                  <div className="flex justify-between items-center flex-row-reverse text-[11.5px] font-bold">
-                    <span>المورد</span>
-                    <div className="flex items-center gap-1.5 flex-row-reverse">
-                      <button 
-                        type="button" 
-                        onClick={() => setView('purchase-vendors')}
-                        className="text-[#0074b1] hover:underline cursor-pointer"
-                      >
-                        + جديد
-                      </button>
-                      <span className="text-slate-300">|</span>
-                      <button type="button" className="text-[#0a78b4] hover:underline cursor-pointer font-extrabold">متعدد</button>
-                    </div>
-                  </div>
-
-                  <select
-                    value={selectedVendorId}
-                    onChange={(e) => setSelectedVendorId(e.target.value)}
-                    className="w-full text-right p-2.5 border border-slate-200 rounded outline-none cursor-pointer focus:border-[#0074b1] text-[11px]"
-                  >
-                    <option value="">اختر مورد</option>
-                    {vendors.map(v => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 11. الضرائب (Taxes) - with '+ إضافة ضرائب' link - Cols 4 */}
-                <div className="md:col-span-4 space-y-1.5">
-                  <div className="flex justify-between items-center flex-row-reverse text-[11.5px] font-bold">
-                    <span>الضرائب</span>
-                    <button type="button" className="text-[#0074b1] hover:underline font-extrabold cursor-pointer">
-                      + إضافة ضرائب
-                    </button>
-                  </div>
-                  
+                <div className="space-y-1.5">
+                  <label className="font-extrabold text-slate-650 block text-[11px]">الضرائب</label>
                   <select
                     value={taxes}
                     onChange={(e) => setTaxes(e.target.value)}
@@ -867,10 +766,23 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
               </div>
 
-              {/* Row 5 Checklist options matching screenshot footer area with checkbox */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end border-t border-slate-100 pt-4">
+                <div className="md:col-span-1 space-y-1.5">
+                  <label className="font-extrabold text-slate-650 block text-[11px]">الحساب الفرعي</label>
+                  <select
+                    value={subAccount}
+                    onChange={(e) => setSubAccount(e.target.value)}
+                    className="w-full text-right p-2.5 bg-slate-50 border border-slate-200 rounded font-bold outline-none text-slate-600 text-[11px]"
+                  >
+                    <option value="آلي">آلي (توليد محاسبي ذكي)</option>
+                    <option value="حساب مصاريف التشغيل">حساب مصاريف التشغيل #501</option>
+                    <option value="حساب مصاريف إدارية وعمومية">حساب مصاريف إدارية وعمومية #502</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between flex-row-reverse border-t border-slate-100 pt-4 text-[11.5px]">
                 
-                {/* Checkbox for متكرر (Recurring) */}
                 <div className="flex items-center gap-2 flex-row-reverse">
                   <input
                     type="checkbox"
@@ -892,7 +804,6 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
             </div>
 
-            {/* Sticky/Sub Save Buttons Bar at bottom as backup matching native Daftra form */}
             <div className="flex justify-start gap-2.5 bg-white p-4 rounded-lg border border-slate-200/80 flex-row">
               <button
                 type="button"

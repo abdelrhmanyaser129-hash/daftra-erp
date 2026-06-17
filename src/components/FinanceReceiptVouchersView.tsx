@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
@@ -24,18 +19,18 @@ import {
 
 interface ReceiptVoucher {
   id: string;
-  code: string; // رقم الكود
-  amount: number; // المبلغ
-  currency: string; // العملة
-  description: string; // الوصف
-  date: string; // التاريخ
-  seller: string; // البائع (أو المستلم)
-  category: string; // التصنيف
-  subAccount: string; // الحساب الفرعي
-  taxes: string; // الضرائب
-  isRecurring: boolean; // متكرر
+  code: string;
+  amount: number;
+  currency: string;
+  description: string;
+  date: string;
+  seller: string;
+  category: string;
+  subAccount: string;
+  taxes: string;
+  isRecurring: boolean;
   status: 'Draft' | 'Saved';
-  treasuryId?: string; // الخزينة/الحساب البنكي المرتبط
+  treasuryId?: string;
 }
 
 interface FinanceReceiptVouchersViewProps {
@@ -43,18 +38,15 @@ interface FinanceReceiptVouchersViewProps {
 }
 
 export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVouchersViewProps) {
-  // Modes: 'list' | 'add'
   const [currentMode, setCurrentMode] = useState<'list' | 'add'>('list');
   const [vouchers, setVouchers] = useState<ReceiptVoucher[]>([]);
 
-  // Search filter states for list page
   const [filterCode, setFilterCode] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  // Form states for Add Voucher
   const [amount, setAmount] = useState('0.00');
   const [currency, setCurrency] = useState('EGP');
   const [description, setDescription] = useState('');
@@ -66,19 +58,15 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
   const [taxes, setTaxes] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
 
-  // Attachment upload simulation
   const [attachmentName, setAttachmentName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // Selected Voucher View Modal
   const [viewingVoucher, setViewingVoucher] = useState<ReceiptVoucher | null>(null);
 
-  // Edit state / treasury selection
   const [editingVoucherId, setEditingVoucherId] = useState<string | null>(null);
   const [treasuryId, setTreasuryId] = useState('');
   const [safesBanks, setSafesBanks] = useState<any[]>([]);
 
-  // Load initial data from Supabase
   useEffect(() => {
     const fetchData = async () => {
       const [vouchersRes, safesRes] = await Promise.all([
@@ -114,7 +102,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     fetchData();
   }, []);
 
-  // Generate next code for receipt voucher
   const getNextCode = (list: ReceiptVoucher[]) => {
     if (list.length === 0) return '000001';
     const codes = list.map(v => {
@@ -185,6 +172,52 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     }
   };
 
+  const updateTreasuryBalance = async (treasuryId: string, amountChange: number, refId: string, refNumber: string, description: string, transactionType: string) => {
+    const { data: treasuryData, error: treasuryError } = await supabase
+      .from('safes_banks')
+      .select('balance')
+      .eq('id', treasuryId)
+      .single();
+
+    if (treasuryError || !treasuryData) {
+      console.error('Error fetching treasury balance:', treasuryError);
+      return null;
+    }
+
+    const currentBalance = Number(treasuryData.balance);
+    const newBalance = currentBalance + amountChange;
+
+    const { error: updateError } = await supabase
+      .from('safes_banks')
+      .update({ balance: newBalance })
+      .eq('id', treasuryId);
+
+    if (updateError) {
+      console.error('Error updating treasury balance:', updateError);
+      return null;
+    }
+
+    const { error: transError } = await supabase.from('treasury_transactions').insert({
+      treasury_id: treasuryId,
+      transaction_type: transactionType,
+      reference_type: 'receipt_voucher',
+      reference_id: refId,
+      reference_number: refNumber,
+      description: description,
+      amount: Math.abs(amountChange),
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      created_by: 'system',
+      created_at: new Date().toISOString(),
+    });
+
+    if (transError) {
+      console.error('Error inserting treasury transaction:', transError);
+    }
+
+    return { currentBalance, newBalance };
+  };
+
   const handleSaveVoucher = async (status: 'Saved' | 'Draft') => {
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
@@ -214,6 +247,9 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     let data: any;
 
     if (editingVoucherId) {
+      // Get old voucher data to reverse previous transaction
+      const oldVoucher = vouchers.find(v => v.id === editingVoucherId);
+      
       const { data: updatedData, error } = await supabase
         .from('receipt_vouchers')
         .update(payload)
@@ -227,6 +263,31 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
         return;
       }
       data = updatedData;
+
+      // If old voucher exists and amount or treasury changed, reverse old and apply new
+      if (oldVoucher) {
+        if (oldVoucher.treasuryId && (oldVoucher.amount !== numAmount || oldVoucher.treasuryId !== treasuryId)) {
+          // Reverse old: subtract old amount from old treasury
+          await updateTreasuryBalance(
+            oldVoucher.treasuryId,
+            -oldVoucher.amount,
+            data.id,
+            data.code,
+            `إلغاء سند قبض قديم #${oldVoucher.code}: ${description || 'تعديل سند قبض'}`,
+            'receipt_voucher_reversal'
+          );
+        }
+      }
+
+      // Apply new transaction
+      await updateTreasuryBalance(
+        treasuryId,
+        numAmount,
+        data.id,
+        data.code,
+        `سند قبض: ${description || 'إيراد وارد'}`,
+        'receipt_voucher'
+      );
     } else {
       const { data: insertedData, error } = await supabase
         .from('receipt_vouchers')
@@ -240,6 +301,16 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
         return;
       }
       data = insertedData;
+
+      // Apply new transaction
+      await updateTreasuryBalance(
+        treasuryId,
+        numAmount,
+        data.id,
+        data.code,
+        `سند قبض: ${description || 'إيراد وارد'}`,
+        'receipt_voucher'
+      );
     }
 
     if (data) {
@@ -283,7 +354,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     }
   };
 
-  // Filtration computations
   const filteredVouchers = vouchers.filter(v => {
     if (filterCode && !v.code.includes(filterCode)) return false;
     if (filterCategory !== 'all' && v.category !== filterCategory) return false;
@@ -292,17 +362,14 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
     return true;
   });
 
-  // Extract unique categories for filter dropdown
   const uniqueCategories = Array.from(new Set(vouchers.map(v => v.category).filter(Boolean)));
 
   return (
     <div id="daftra-finance-receipt-vouchers-container" className="w-full mx-auto text-right font-sans select-none pb-12 antialiased">
       
-      {/* ----------------- MODE 1: LIST VIEW ----------------- */}
       {currentMode === 'list' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Action Header Nav */}
           <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-xs flex-row-reverse text-xs gap-3">
             <div className="flex items-center gap-1.5 flex-row-reverse text-slate-500 font-bold">
               <span className="text-[#0074b1] hover:underline cursor-pointer" onClick={() => setView('dashboard')}>المالية</span>
@@ -335,7 +402,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
             <p className="text-xs text-slate-400 font-bold">إقرار مالي وتأكيد للمبالغ والتدفقات النقدية الواردة إلى الخزائن والحسابات الجارية.</p>
           </div>
 
-          {/* Collapsible search filtration panel */}
           <AnimatePresence>
             {showFilters && (
               <motion.div
@@ -407,9 +473,7 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
             )}
           </AnimatePresence>
 
-          {/* Conditional Empty List State vs Table Grid */}
           {vouchers.length === 0 ? (
-            /* EMPTY STATE with big centered direct button */
             <div id="receipt-vouchers-empty-state" className="bg-white py-16 px-6 rounded-xl border border-slate-200 shadow-xs flex flex-col items-center justify-center text-center space-y-6">
               <div className="w-20 h-20 bg-emerald-50 border border-emerald-100 text-emerald-500 rounded-full flex items-center justify-center">
                 <TrendingUp className="w-10 h-10" />
@@ -424,7 +488,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                 </p>
               </div>
 
-              {/* Action handle click button */}
               <button
                 type="button"
                 onClick={handleOpenAdd}
@@ -435,7 +498,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
               </button>
             </div>
           ) : (
-            /* TABLE VIEW */
             <div className="bg-white rounded-xl border border-slate-205 shadow-xs overflow-hidden">
               <div className="bg-slate-50/70 p-4 border-b border-slate-150 text-right">
                 <span className="text-xs font-bold text-slate-700">سندات القبض المقيدة</span>
@@ -509,13 +571,10 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
         </div>
       )}
 
-
-      {/* ----------------- MODE 2: DETAILS DIALOG ----------------- */}
       {viewingVoucher && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn">
           <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xl w-full text-right overflow-hidden flex flex-col">
             
-            {/* Header Path */}
             <div className="p-4 bg-[#f8fafc] border-b border-slate-150 flex justify-between items-center flex-row-reverse text-xs">
               <span className="text-[#0074b1] font-black">تفاصيل مستند القبض المحاسبي #{viewingVoucher.code}</span>
               <button
@@ -526,7 +585,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
               </button>
             </div>
 
-            {/* Slip contents */}
             <div className="p-6 space-y-4 text-xs font-semibold">
               
               <div className="flex justify-between items-start flex-row-reverse border-b border-slate-100 pb-3">
@@ -542,7 +600,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                 </div>
               </div>
 
-              {/* Grid data */}
               <div className="grid grid-cols-2 gap-4">
                 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded space-y-1 text-right">
@@ -559,7 +616,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Big amount declaration display */}
               <div className="bg-[#f0fef4]/50 p-4 border border-emerald-600/30 rounded-lg text-center space-y-0.5">
                 <span className="text-slate-450 font-bold block text-[10px]">القيمة الكاملة المودعة للوارد</span>
                 <span className="text-3xl font-black text-emerald-600 font-mono leading-none block">
@@ -570,7 +626,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                 </span>
               </div>
 
-              {/* Description explanation notes block */}
               {viewingVoucher.description && (
                 <div className="bg-slate-50 p-3 rounded border border-slate-205 text-xs select-text">
                   <span className="font-black text-slate-850 block mb-1">📝 وصف الشرح المكتوب لوارد السند:</span>
@@ -580,7 +635,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
             </div>
 
-            {/* Bottom Actions footer bar */}
             <div className="p-4 bg-slate-50 border-t border-slate-150 flex justify-between items-center text-xs">
               <button
                 type="button"
@@ -604,17 +658,12 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
         </div>
       )}
 
-
-      {/* ----------------- MODE 3: ADD RECEIPT VOUCHER FORM (SCREENSHOT EXACT LAYOUT MATCH) ----------------- */}
       {currentMode === 'add' && (
         <div className="space-y-6 animate-fadeIn">
           
-          {/* Top Form Toolbar resembling screenshot structure: Buttons Left, Title Right */}
           <div className="flex justify-between items-center bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex-row">
             
-            {/* Left: Cancel and Save Dropdown */}
             <div className="flex items-center gap-2">
-              {/* cancel button */}
               <button
                 type="button"
                 onClick={() => setCurrentMode('list')}
@@ -624,7 +673,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                 <span>إلغاء</span>
               </button>
 
-              {/* save button with arrow */}
               <div className="relative inline-flex">
                 <button
                   type="submit"
@@ -640,7 +688,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
               </div>
             </div>
 
-            {/* Right: Save as Draft title */}
             <div className="flex">
               <button
                 type="button"
@@ -653,27 +700,21 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
           </div>
 
-          {/* Form Breadcrumb Row matching screenshot visual path */}
           <div className="flex items-center gap-1.5 flex-row-reverse text-xs text-slate-400 font-extrabold">
             <span className="text-[#0a78b4] hover:underline cursor-pointer" onClick={() => setCurrentMode('list')}>سندات القبض</span>
             <span className="text-slate-300">/</span>
             <span className="text-slate-800 font-black">{editingVoucherId ? 'تعديل سند قبض' : 'إضافة'}</span>
           </div>
 
-          {/* Screenshot Form elements box wrapper */}
           <div className="bg-[#f8fafc] rounded-xl border border-slate-200 p-8 space-y-6 shadow-xs">
             
-            {/* White card container mirroring screenshot inputs */}
             <div className="bg-white p-6 rounded-lg border border-slate-205 shadow-xs space-y-5 text-right text-xs font-semibold">
               
-              {/* Row 1 matching the top element grid: Amount, description & Attachments */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
                 
-                {/* 1. المبلغ (Amount) - Right side of layout (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">المبلغ</label>
                   <div className="flex rounded border border-slate-200 bg-white overflow-hidden focus-within:border-[#0074b1]">
-                    {/* Currency selection element */}
                     <select
                       value={currency}
                       onChange={(e) => setCurrency(e.target.value)}
@@ -698,7 +739,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                   </div>
                 </div>
 
-                {/* 2. الوصف (Description) - Middle layout (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">الوصف</label>
                   <textarea
@@ -710,7 +750,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                   />
                 </div>
 
-                {/* 3. المرفقات (Attachments) - Left layout (cols 4) */}
                 <div className="md:col-span-4 space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px] text-right">المرفقات</label>
                   <div
@@ -743,7 +782,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Row 2: Treasury / Bank Account selection */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">الخزينة / الحساب البنكي <span className="text-rose-500">*</span></label>
@@ -763,10 +801,8 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                 <div />
               </div>
 
-              {/* Row 3 matching screenshot layout: Code | Date */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                 
-                {/* 4. رقم الكود * (Mandatory Code Field) */}
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center flex-row-reverse text-[11px]">
                     <span className="font-extrabold text-slate-650 block">رقم الكود <span className="text-rose-500">*</span></span>
@@ -783,7 +819,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                   />
                 </div>
 
-                {/* 5. التاريخ (Date input) */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">التاريخ</label>
                   <input
@@ -797,10 +832,8 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Row 3 layout matching screenshot: Seller | Category */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
                 
-                {/* 6. البائع (Seller) dropdown */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">البائع</label>
                   <select
@@ -816,7 +849,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                   </select>
                 </div>
 
-                {/* 7. التصنيف (Category) */}
                 <div className="space-y-1.5">
                   <label className="font-extrabold text-slate-650 block text-[11px]">التصنيف</label>
                   <select
@@ -835,7 +867,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Row 4: Checkbox for isRecurring (الخيار متكرر) */}
               <div className="flex items-center justify-between flex-row-reverse border-t border-slate-100 pt-4 text-[11.5px]">
                 
                 <div className="flex items-center gap-2 flex-row-reverse">
@@ -857,10 +888,8 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
               </div>
 
-              {/* Row 5: Taxes & Sub-account */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end border-t border-slate-100 pt-4">
                 
-                {/* 8. الحساب الفرعي (Sub-account select) */}
                 <div className="space-y-1.5 text-right">
                   <label className="font-extrabold text-slate-650 block text-[11px]">الحساب الفرعي</label>
                   <select
@@ -874,7 +903,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
                   </select>
                 </div>
 
-                {/* 9. الضرائب (Taxes selection) */}
                 <div className="space-y-1.5 text-right font-semibold">
                   <div className="flex justify-between items-center flex-row-reverse text-[11.5px] font-bold">
                     <span>الضرائب</span>
@@ -899,7 +927,6 @@ export default function FinanceReceiptVouchersView({ setView }: FinanceReceiptVo
 
             </div>
 
-            {/* Bottom Actions Form buttons bar */}
             <div className="flex justify-start gap-2.5 bg-white p-4 rounded-lg border border-slate-200/80 flex-row">
               <button
                 type="button"

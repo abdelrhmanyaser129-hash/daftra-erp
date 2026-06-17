@@ -9,9 +9,9 @@ import {
   X,
   CheckCircle2,
   FileText,
-  RefreshCw
+  RefreshCw,
+  Search
 } from 'lucide-react';
-import { Client, Invoice } from '../types';
 import { supabase } from '../lib/supabase';
 
 interface ReturnedInvoicesViewProps {
@@ -33,6 +33,10 @@ interface ReturnedInvoice {
 export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInvoicesViewProps) {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [safesBanks, setSafesBanks] = useState<any[]>([]);
+  const [returnedInvoices, setReturnedInvoices] = useState<ReturnedInvoice[]>([]);
 
   useEffect(() => {
     loadData();
@@ -43,6 +47,25 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
     if (inv) setInvoices(inv);
     const { data: cl } = await supabase.from('clients').select('*');
     if (cl) setClients(cl);
+    const { data: pr } = await supabase.from('products').select('id, name, code, selling_price');
+    if (pr) setProducts(pr);
+    const { data: wh } = await supabase.from('warehouses').select('id, name');
+    if (wh) setWarehouses(wh);
+    const { data: sb } = await supabase.from('safes_banks').select('id, name, type');
+    if (sb) setSafesBanks(sb);
+    const { data: ri } = await supabase.from('returned_invoices').select('*').order('created_at', { ascending: false });
+    if (ri) {
+      setReturnedInvoices(ri.map((r: any) => ({
+        id: r.id,
+        invoiceNumber: r.invoice_id || '',
+        returnNumber: r.return_number,
+        clientName: r.client_name,
+        date: r.date,
+        total: r.total,
+        status: r.status === 'refunded' ? 'refunded' : r.status === 'partially-refunded' ? 'partially-refunded' : 'draft',
+        currency: 'EGP'
+      })));
+    }
   };
 
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -74,16 +97,26 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
   const [orderSource, setOrderSource] = useState('any');
   const [isSearched, setIsSearched] = useState(false);
   const [sortOrder, setSortOrder] = useState('newest');
-  const [returnedInvoices, setReturnedInvoices] = useState<ReturnedInvoice[]>([]);
 
   // Add return modal state
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
-  const [returnAmount, setReturnAmount] = useState(0);
   const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
   const [returnReason, setReturnReason] = useState('');
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
+  const [selectedTreasuryId, setSelectedTreasuryId] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('نقدا');
+  const [refundAmount, setRefundAmount] = useState(0);
+  const [doRefund, setDoRefund] = useState(false);
 
-  const paidInvoices = invoices.filter(inv => inv.status === 'paid');
+  // Return items
+  const [returnItems, setReturnItems] = useState<any[]>([]);
+
+  // Product search
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
+
+  const paidInvoices = invoices.filter(inv => inv.status === 'paid' || inv.status === 'unpaid');
 
   const handleClearFilters = () => {
     setClientFilter('any');
@@ -124,48 +157,209 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
     return `RET-${String(lastNum + 1).padStart(6, '0')}`;
   };
 
+  const handleInvoiceSelect = (invId: string) => {
+    setSelectedInvoiceId(invId);
+    const inv = invoices.find(i => i.id === invId);
+    if (inv && inv.items) {
+      const items = Array.isArray(inv.items) ? inv.items : [];
+      setReturnItems(items.map((item: any, idx: number) => ({
+        id: `ret-item-${idx}-${Date.now()}`,
+        productId: item.productId || '',
+        itemName: item.itemName || '',
+        quantity: item.quantity || 1,
+        unitPrice: item.unitPrice || 0,
+        returnQty: item.quantity || 1
+      })));
+      setRefundAmount(inv.total || 0);
+    } else {
+      setReturnItems([]);
+      setRefundAmount(0);
+    }
+  };
+
+  const getFilteredProducts = (query: string) => {
+    if (!query.trim()) return products;
+    const q = query.toLowerCase();
+    return products.filter((p: any) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.code && p.code.toLowerCase().includes(q))
+    );
+  };
+
+  const handleSelectProduct = (itemId: string, product: any) => {
+    setReturnItems(prev =>
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        return {
+          ...item,
+          productId: product.id,
+          itemName: product.name,
+          unitPrice: parseFloat(product.selling_price) || 0
+        };
+      })
+    );
+    setShowProductDropdown(prev => ({ ...prev, [itemId]: false }));
+  };
+
+  const recordInventoryMovement = async (
+    productId: string,
+    warehouseId: string,
+    movementType: string,
+    referenceType: string,
+    referenceId: string,
+    referenceNumber: string,
+    qtyChange: number,
+    createdBy: string
+  ) => {
+    const { data: stock } = await supabase
+      .from('warehouse_stock')
+      .select('quantity')
+      .eq('product_id', productId)
+      .eq('warehouse_id', warehouseId)
+      .maybeSingle();
+
+    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
+    const qtyAfter = qtyBefore + qtyChange;
+
+    await supabase
+      .from('warehouse_stock')
+      .upsert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        quantity: qtyAfter
+      }, { onConflict: 'product_id,warehouse_id' });
+
+    await supabase
+      .from('inventory_movements')
+      .insert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        movement_type: movementType,
+        reference_type: referenceType,
+        reference_id: referenceId,
+        reference_number: referenceNumber,
+        qty_before: qtyBefore,
+        qty_change: qtyChange,
+        qty_after: qtyAfter,
+        created_by: createdBy
+      });
+  };
+
   const handleAddReturn = async () => {
     if (!selectedInvoiceId) {
       showToast?.('الرجاء اختيار الفاتورة المراد إرجاعها.', 'error');
       return;
     }
-    if (returnAmount <= 0) {
-      showToast?.('الرجاء إدخال مبلغ صحيح للإرجاع.', 'error');
+    if (!selectedWarehouseId) {
+      showToast?.('الرجاء اختيار المستودع.', 'error');
       return;
     }
 
     const invoice = invoices.find(inv => inv.id === selectedInvoiceId);
     if (!invoice) return;
 
-    if (returnAmount > invoice.total) {
-      showToast?.('قيمة الإرجاع لا يمكن أن تتجاوز قيمة الفاتورة الأصلية.', 'error');
+    const returnItemsWithProduct = returnItems.filter(item => item.productId && item.returnQty > 0);
+    if (returnItemsWithProduct.length === 0) {
+      showToast?.('الرجاء اختيار منتجات للإرجاع.', 'error');
       return;
     }
 
-    const isFullReturn = returnAmount >= invoice.total;
+    const totalReturnQty = returnItemsWithProduct.reduce((sum, item) => sum + item.returnQty, 0);
+    if (totalReturnQty <= 0) {
+      showToast?.('الرجاء إدخال كميات صحيحة للإرجاع.', 'error');
+      return;
+    }
 
-    const returned: ReturnedInvoice = {
-      id: `ret-${Date.now()}`,
-      invoiceNumber: invoice.invoiceNumber,
-      returnNumber: getNextReturnNumber(),
-      clientName: invoice.clientName,
+    const returnNumber = getNextReturnNumber();
+    const returnId = `ret-${Date.now()}`;
+
+    const totalReturnValue = returnItemsWithProduct.reduce((sum, item) => sum + (item.unitPrice * item.returnQty), 0);
+
+    const isFullReturn = totalReturnValue >= invoice.total;
+
+    await supabase.from('returned_invoices').insert({
+      id: returnId,
+      return_number: returnNumber,
+      invoice_id: selectedInvoiceId,
+      client_id: invoice.client_id || null,
+      client_name: invoice.clientName || invoice.client_name || '',
       date: returnDate,
-      total: returnAmount,
+      items: returnItemsWithProduct,
+      total: totalReturnValue,
       status: isFullReturn ? 'refunded' : 'partially-refunded',
-      currency: 'EGP'
-    };
+      notes: returnReason,
+      warehouse_id: selectedWarehouseId,
+      treasury_id: doRefund ? selectedTreasuryId : null
+    });
 
-    await supabase.from('invoices').update({ status: 'returned' }).eq('id', selectedInvoiceId);
+    for (const item of returnItemsWithProduct) {
+      await recordInventoryMovement(
+        item.productId,
+        selectedWarehouseId,
+        'sale_return',
+        'returned_invoice',
+        returnId,
+        returnNumber,
+        item.returnQty,
+        'Abdo Yaser'
+      );
+    }
+
+    if (doRefund && selectedTreasuryId && totalReturnValue > 0) {
+      const { data: treasury } = await supabase
+        .from('safes_banks')
+        .select('balance')
+        .eq('id', selectedTreasuryId)
+        .single();
+
+      const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
+      const newBalance = currentBalance - totalReturnValue;
+
+      await supabase
+        .from('safes_banks')
+        .update({ balance: newBalance })
+        .eq('id', selectedTreasuryId);
+
+      await supabase.from('treasury_transactions').insert({
+        treasury_id: selectedTreasuryId,
+        transaction_type: 'payment_voucher',
+        reference_type: 'returned_invoice',
+        reference_id: returnId,
+        reference_number: returnNumber,
+        description: `رد قيمة مرتجع مبيعات ${returnNumber} للفاتورة #${invoice.invoiceNumber}`,
+        amount: totalReturnValue,
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        created_by: 'Abdo Yaser'
+      });
+    }
+
     setInvoices(prev => prev.map(inv =>
       inv.id === selectedInvoiceId ? { ...inv, status: 'returned', alreadyPaid: false } : inv
     ));
+
+    const returned: ReturnedInvoice = {
+      id: returnId,
+      invoiceNumber: invoice.invoiceNumber,
+      returnNumber,
+      clientName: invoice.clientName || invoice.client_name || '',
+      date: returnDate,
+      total: totalReturnValue,
+      status: isFullReturn ? 'refunded' : 'partially-refunded',
+      currency: 'EGP'
+    };
     setReturnedInvoices(prev => [returned, ...prev]);
+
     setShowAddModal(false);
     setSelectedInvoiceId('');
-    setReturnAmount(0);
     setReturnDate(new Date().toISOString().split('T')[0]);
     setReturnReason('');
-    showToast?.(`تم تسجيل مرتجع بقيمة ${returnAmount} ج.م للفاتورة #${invoice.invoiceNumber} بنجاح.`);
+    setSelectedWarehouseId('');
+    setSelectedTreasuryId('');
+    setReturnItems([]);
+    setRefundAmount(0);
+    setDoRefund(false);
+    showToast?.(`تم تسجيل مرتجع بقيمة ${totalReturnValue.toLocaleString('ar-EG')} ج.م للفاتورة #${invoice.invoiceNumber} بنجاح.`);
   };
 
   const getSelectedInvoice = () => invoices.find(inv => inv.id === selectedInvoiceId);
@@ -358,7 +552,7 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-500 block">مصدر الطلب</label>
                       <div className="relative">
-                        <select value={orderSource} onChange={(e) => setOrderSource(e.target.value)} className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-1.5 text-xs text-slate-700 outline-none appearance-none cursor-pointer hover:border-slate-400 text-[#4c5c6c] text-right pl-8" style={{ direction: 'rtl' }}>
+                        <select value={orderSource} onChange={(e) => setOrderSource(e.target.value)} className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-1.5 text-xs text-slate-700 outline-none appearance-none cursor-pointer hover:border-slate-400 text-right pl-8" style={{ direction: 'rtl' }}>
                           <option value="any">من فضلك اختر</option>
                           <option value="web">الموقع الإلكتروني</option>
                           <option value="mobile">تطبيق الموبايل</option>
@@ -524,18 +718,18 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
               initial={{ scale: 0.95, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-lg rounded-lg shadow-2xl overflow-hidden"
+              className="bg-white w-full max-w-2xl rounded-lg shadow-2xl overflow-hidden"
             >
               <div className="bg-[#0d385a] px-5 py-3.5 text-white flex justify-between items-center">
                 <div className="flex items-center gap-2 text-sm font-bold">
                   <RefreshCw className="w-5 h-5 text-amber-400" />
                   <span>تسجيل مرتجع مبيعات</span>
                 </div>
-                <button type="button" className="p-1 bg-white/10 hover:bg-white/20 text-white rounded cursor-pointer" onClick={() => setShowAddModal(false)}>
+                <button type="button" className="p-1 bg-white/10 hover:bg-white/20 text-white rounded cursor-pointer" onClick={() => { setShowAddModal(false); setReturnItems([]); }}>
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <div className="p-5 space-y-4 text-right">
+              <div className="p-5 space-y-4 text-right max-h-[70vh] overflow-y-auto">
                 {paidInvoices.length === 0 ? (
                   <div className="border border-amber-200 bg-amber-50 text-amber-800 rounded p-4 text-center text-xs font-bold">
                     لا توجد فواتير مدفوعة متاحة للإرجاع.
@@ -547,18 +741,14 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                       <div className="relative">
                         <select
                           value={selectedInvoiceId}
-                          onChange={(e) => {
-                            setSelectedInvoiceId(e.target.value);
-                            const inv = invoices.find(i => i.id === e.target.value);
-                            if (inv) setReturnAmount(inv.total);
-                          }}
+                          onChange={(e) => handleInvoiceSelect(e.target.value)}
                           className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none appearance-none cursor-pointer text-right pl-8"
                           style={{ direction: 'rtl' }}
                         >
                           <option value="">-- اختر فاتورة --</option>
                           {paidInvoices.map(inv => (
                             <option key={inv.id} value={inv.id}>
-                              #{inv.invoiceNumber} - {inv.clientName} - {inv.total.toLocaleString('ar-EG')} ج.م
+                              #{inv.invoiceNumber} - {inv.clientName || inv.client_name} - {inv.total?.toLocaleString('ar-EG')} ج.م
                             </option>
                           ))}
                         </select>
@@ -567,43 +757,146 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                     </div>
 
                     {selectedInvoiceId && (
-                      <div className="bg-amber-50 border border-amber-100 rounded p-2.5 text-[11px] text-amber-800 font-semibold flex justify-between">
-                        <span>قيمة الفاتورة الأصلية:</span>
-                        <span className="font-mono">{getSelectedInvoice()?.total.toLocaleString('ar-EG')} ج.م</span>
-                      </div>
+                      <>
+                        {/* Warehouse Selection */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">المستودع <span className="text-rose-500">*</span></label>
+                          <select
+                            value={selectedWarehouseId}
+                            onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                            className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none text-right"
+                          >
+                            <option value="">(اختر المستودع)</option>
+                            {warehouses.map(w => (
+                              <option key={w.id} value={w.id}>{w.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Return Items */}
+                        <div className="border border-slate-200 rounded overflow-hidden">
+                          <div className="bg-slate-50 px-3 py-2 border-b border-slate-200">
+                            <span className="text-xs font-bold text-slate-700">البنود المرتجعة</span>
+                          </div>
+                          <div className="p-3 space-y-3">
+                            {returnItems.map((item, idx) => (
+                              <div key={item.id} className="flex items-center gap-2 border-b border-dashed border-slate-100 pb-2">
+                                <div className="flex-1 relative">
+                                  <input
+                                    type="text"
+                                    value={item.productId ? item.itemName : productSearchQuery}
+                                    onChange={(e) => {
+                                      setProductSearchQuery(e.target.value);
+                                      setShowProductDropdown(prev => ({ ...prev, [item.id]: true }));
+                                      if (!e.target.value) {
+                                        setReturnItems(prev => prev.map(i => i.id === item.id ? { ...i, productId: '', itemName: '' } : i));
+                                      }
+                                    }}
+                                    onFocus={() => setShowProductDropdown(prev => ({ ...prev, [item.id]: true }))}
+                                    onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [item.id]: false })), 200)}
+                                    placeholder="ابحث عن منتج..."
+                                    className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs"
+                                  />
+                                  {showProductDropdown[item.id] && (
+                                    <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-36 overflow-y-auto">
+                                      {getFilteredProducts(productSearchQuery).map((p: any) => (
+                                        <div
+                                          key={p.id}
+                                          onMouseDown={() => handleSelectProduct(item.id, p)}
+                                          className="px-3 py-1.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 flex justify-between"
+                                        >
+                                          <span className="font-bold">{p.name}</span>
+                                          <span className="text-slate-400">{p.code}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="w-20">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={item.quantity || 999}
+                                    value={item.returnQty}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value) || 0;
+                                      setReturnItems(prev => prev.map(i => i.id === item.id ? { ...i, returnQty: val } : i));
+                                    }}
+                                    className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs text-center font-mono"
+                                  />
+                                </div>
+                                <span className="text-[10px] text-slate-400 w-16 text-left">الكمية: {item.quantity}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">التاريخ</label>
+                          <input
+                            type="date"
+                            value={returnDate}
+                            onChange={(e) => setReturnDate(e.target.value)}
+                            className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none text-right"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">سبب الإرجاع</label>
+                          <textarea
+                            value={returnReason}
+                            onChange={(e) => setReturnReason(e.target.value)}
+                            placeholder="اذكر سبب الإرجاع..."
+                            className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none resize-none"
+                            rows={2}
+                          />
+                        </div>
+
+                        {/* Refund Section */}
+                        <div className="bg-amber-50 border border-amber-100 rounded p-3 space-y-3">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={doRefund}
+                              onChange={(e) => setDoRefund(e.target.checked)}
+                              className="w-4 h-4 text-amber-600"
+                            />
+                            <span className="text-xs font-bold text-slate-700">رد المبلغ للعميل</span>
+                          </label>
+
+                          {doRefund && (
+                            <div className="space-y-3 pr-6">
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+                                <select
+                                  value={paymentMethod}
+                                  onChange={(e) => setPaymentMethod(e.target.value)}
+                                  className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                                >
+                                  <option value="نقدا">نقدا</option>
+                                  <option value="بنك">بنك</option>
+                                  <option value="شيك">شيك</option>
+                                  <option value="تحويل">تحويل</option>
+                                </select>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-700">الخزنة / الحساب البنكي</label>
+                                <select
+                                  value={selectedTreasuryId}
+                                  onChange={(e) => setSelectedTreasuryId(e.target.value)}
+                                  className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                                >
+                                  <option value="">(اختر الخزنة)</option>
+                                  {safesBanks.map(sb => (
+                                    <option key={sb.id} value={sb.id}>{sb.name} ({sb.type === 'safe' ? 'خزنة' : 'بنك'})</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
                     )}
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700">قيمة المرتجع</label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={returnAmount}
-                        onChange={(e) => setReturnAmount(parseFloat(e.target.value) || 0)}
-                        className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none text-right font-mono font-bold"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700">التاريخ</label>
-                      <input
-                        type="date"
-                        value={returnDate}
-                        onChange={(e) => setReturnDate(e.target.value)}
-                        className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none text-right"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700">سبب الإرجاع</label>
-                      <textarea
-                        value={returnReason}
-                        onChange={(e) => setReturnReason(e.target.value)}
-                        placeholder="اذكر سبب الإرجاع..."
-                        className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none resize-none"
-                        rows={2}
-                      />
-                    </div>
 
                     <div className="flex gap-2 pt-2">
                       <button
@@ -614,7 +907,7 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                         <span>تسجيل المرتجع</span>
                       </button>
                       <button
-                        onClick={() => setShowAddModal(false)}
+                        onClick={() => { setShowAddModal(false); setReturnItems([]); }}
                         className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-xs font-bold transition-all cursor-pointer"
                       >
                         إلغاء

@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import {
@@ -27,7 +22,8 @@ import {
   Link2,
   Strikethrough,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Search
 } from 'lucide-react';
 import { Client, Invoice, InvoiceItem, ProductService } from '../types';
 import { INITIAL_PRODUCTS } from '../data';
@@ -41,13 +37,18 @@ export default function CreateInvoiceView({
 }: CreateInvoiceViewProps) {
   const [clients, setClients] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [safesBanks, setSafesBanks] = useState<any[]>([]);
 
   useEffect(() => {
     supabase.from('clients').select('*').then(({ data }) => { if (data) setClients(data); });
     supabase.from('invoices').select('*').then(({ data }) => { if (data) setInvoices(data); });
+    supabase.from('products').select('id, name, code, selling_price, tax1').then(({ data }) => { if (data) setProducts(data); });
+    supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
+    supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
   }, []);
 
-  // Generate next automatic invoice number
   const getNextInvoiceNumber = () => {
     if (invoices.length === 0) return '000001';
     const lastNum = invoices.reduce((max, inv) => {
@@ -57,7 +58,6 @@ export default function CreateInvoiceView({
     return String(lastNum + 1).padStart(6, '0');
   };
 
-  // State
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [invoiceNumber, setInvoiceNumber] = useState<string>(getNextInvoiceNumber());
   const [invoiceDate, setInvoiceDate] = useState<string>('2026-06-05');
@@ -65,25 +65,23 @@ export default function CreateInvoiceView({
   const [salesAgent, setSalesAgent] = useState<string>('Abdo Yaser #000001');
   const [paymentTerms, setPaymentTerms] = useState<string>('');
   const [billingTemplate, setBillingTemplate] = useState<string>('التصميم الافتراضي للفاتورة');
-  
-  // Row Items
-  const [items, setItems] = useState<InvoiceItem[]>([
+
+  const [items, setItems] = useState<any[]>([
     {
       id: 'row-1',
+      productId: '',
       itemName: '',
       description: '',
       unitPrice: 0,
       quantity: 1,
       discount: 0,
-      taxValue: 14, // Default 14% Egyptian VAT
+      taxValue: 14,
       total: 0
     }
   ]);
 
-  // Bottom Tabs
   const [activeTab, setActiveTab] = useState<'discount' | 'deposit' | 'shipping' | 'attachments'>('discount');
-  
-  // Global form adjustments
+
   const [globalDiscountType, setGlobalDiscountType] = useState<'percentage' | 'amount'>('percentage');
   const [globalDiscountValue, setGlobalDiscountValue] = useState<number>(0);
   const [adjustmentValue, setAdjustmentValue] = useState<number>(0);
@@ -92,22 +90,26 @@ export default function CreateInvoiceView({
   );
   const [alreadyPaid, setAlreadyPaid] = useState<boolean>(false);
 
-  // Math Computations
   const [subtotal, setSubtotal] = useState<number>(0);
   const [grandTotal, setGrandTotal] = useState<number>(0);
 
-  // Preview Modal overlay
   const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
 
-  // Auto Calculations when row items or adjustment variables modify
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<string>('نقدا');
+  const [selectedTreasuryId, setSelectedTreasuryId] = useState<string>('');
+
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     let computedSubtotal = 0;
-    
+
     const updatedRows = items.map(row => {
       const rowNet = (row.unitPrice * row.quantity) - row.discount;
       const rowTax = rowNet * (row.taxValue / 100);
       const rowTotal = rowNet + rowTax;
-      
+
       computedSubtotal += (row.unitPrice * row.quantity);
       return {
         ...row,
@@ -117,10 +119,8 @@ export default function CreateInvoiceView({
 
     setSubtotal(parseFloat(computedSubtotal.toFixed(2)));
 
-    // Net value across all row totals
     let rowsTotalSum = updatedRows.reduce((acc, row) => acc + row.total, 0);
 
-    // Apply global discount
     let totalAfterDiscount = rowsTotalSum;
     if (globalDiscountType === 'percentage') {
       totalAfterDiscount = rowsTotalSum - (rowsTotalSum * (globalDiscountValue / 100));
@@ -128,19 +128,17 @@ export default function CreateInvoiceView({
       totalAfterDiscount = rowsTotalSum - globalDiscountValue;
     }
 
-    // Apply Adjustment
     const finalTotal = Math.max(0, totalAfterDiscount + adjustmentValue);
     setGrandTotal(parseFloat(finalTotal.toFixed(2)));
-
   }, [items, globalDiscountType, globalDiscountValue, adjustmentValue]);
 
-  // Handler to add a new line row item
   const handleAddRow = () => {
     const newId = `row-${Date.now()}`;
     setItems(prev => [
       ...prev,
       {
         id: newId,
+        productId: '',
         itemName: '',
         description: '',
         unitPrice: 0,
@@ -152,7 +150,6 @@ export default function CreateInvoiceView({
     ]);
   };
 
-  // Handler to delete a row item
   const handleDeleteRow = (id: string) => {
     if (items.length === 1) {
       alert('يجب أن تحتوي الفاتورة على بند واحد على الأقل.');
@@ -161,29 +158,85 @@ export default function CreateInvoiceView({
     setItems(prev => prev.filter(row => row.id !== id));
   };
 
-  // Row update helper
-  const handleUpdateRow = (id: string, field: keyof InvoiceItem, value: any) => {
+  const handleUpdateRow = (id: string, field: string, value: any) => {
     setItems(prev =>
       prev.map(row => {
         if (row.id !== id) return row;
-        
-        const updated = { ...row, [field]: value };
-        
-        // If updating itemName, check if we can autofill description and unit price from known items
-        if (field === 'itemName') {
-          const matchedItem = INITIAL_PRODUCTS.find(p => p.name === value);
-          if (matchedItem) {
-            updated.description = matchedItem.description;
-            updated.unitPrice = matchedItem.price;
-            updated.taxValue = matchedItem.taxRate;
-          }
-        }
-        return updated;
+        return { ...row, [field]: value };
       })
     );
   };
 
-  // Submits the draft
+  const handleSelectProduct = (rowId: string, product: any) => {
+    setItems(prev =>
+      prev.map(row => {
+        if (row.id !== rowId) return row;
+        return {
+          ...row,
+          productId: product.id,
+          itemName: product.name,
+          unitPrice: parseFloat(product.selling_price) || 0,
+          taxValue: parseInt(product.tax1) || 14
+        };
+      })
+    );
+    setShowProductDropdown(prev => ({ ...prev, [rowId]: false }));
+    setProductSearchQuery('');
+  };
+
+  const getFilteredProducts = (query: string) => {
+    if (!query.trim()) return products;
+    const q = query.toLowerCase();
+    return products.filter((p: any) =>
+      p.name.toLowerCase().includes(q) ||
+      (p.code && p.code.toLowerCase().includes(q))
+    );
+  };
+
+  const recordInventoryMovement = async (
+    productId: string,
+    warehouseId: string,
+    movementType: string,
+    referenceType: string,
+    referenceId: string,
+    referenceNumber: string,
+    qtyChange: number,
+    createdBy: string
+  ) => {
+    const { data: stock } = await supabase
+      .from('warehouse_stock')
+      .select('quantity')
+      .eq('product_id', productId)
+      .eq('warehouse_id', warehouseId)
+      .maybeSingle();
+
+    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
+    const qtyAfter = qtyBefore + qtyChange;
+
+    await supabase
+      .from('warehouse_stock')
+      .upsert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        quantity: qtyAfter
+      }, { onConflict: 'product_id,warehouse_id' });
+
+    await supabase
+      .from('inventory_movements')
+      .insert({
+        product_id: productId,
+        warehouse_id: warehouseId,
+        movement_type: movementType,
+        reference_type: referenceType,
+        reference_id: referenceId,
+        reference_number: referenceNumber,
+        qty_before: qtyBefore,
+        qty_change: qtyChange,
+        qty_after: qtyAfter,
+        created_by: createdBy
+      });
+  };
+
   const handleSaveDraft = async (statusOverride?: 'paid' | 'unpaid' | 'draft') => {
     const finalSelectedClient = clients.find(c => c.id === selectedClientId);
     if (!finalSelectedClient) {
@@ -192,6 +245,22 @@ export default function CreateInvoiceView({
     }
 
     const calculatedStatusValue = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
+
+    if (calculatedStatusValue === 'paid' && !selectedWarehouseId) {
+      alert('الرجاء اختيار المستودع لتسجيل حركة المخزون.');
+      return;
+    }
+
+    if (calculatedStatusValue === 'paid' && !selectedTreasuryId) {
+      alert('الرجاء اختيار الخزنة أو الحساب البنكي لتسجيل المعاملة المالية.');
+      return;
+    }
+
+    const hasProductItems = items.some(item => item.productId);
+    if (calculatedStatusValue === 'paid' && !hasProductItems) {
+      alert('الرجاء اختيار منتجات من القائمة لتسجيل حركة المخزون.');
+      return;
+    }
 
     const newInvoice: Invoice = {
       id: `inv-${Date.now()}`,
@@ -230,8 +299,56 @@ export default function CreateInvoiceView({
       total: newInvoice.total,
       notes: newInvoice.notes,
       already_paid: newInvoice.alreadyPaid,
-      currency: newInvoice.currency
+      currency: newInvoice.currency,
+      warehouse_id: selectedWarehouseId || null,
+      treasury_id: selectedTreasuryId || null,
+      payment_method: calculatedStatusValue === 'paid' ? paymentMethod : ''
     }).select().single();
+
+    if (calculatedStatusValue === 'paid' && newInv) {
+      for (const item of items) {
+        if (item.productId && item.quantity > 0) {
+          await recordInventoryMovement(
+            item.productId,
+            selectedWarehouseId,
+            'sale',
+            'invoice',
+            newInv.id,
+            newInv.invoice_number,
+            -item.quantity,
+            salesAgent
+          );
+        }
+      }
+
+      const { data: treasury } = await supabase
+        .from('safes_banks')
+        .select('balance')
+        .eq('id', selectedTreasuryId)
+        .single();
+
+      const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
+      const newBalance = currentBalance + grandTotal;
+
+      await supabase
+        .from('safes_banks')
+        .update({ balance: newBalance })
+        .eq('id', selectedTreasuryId);
+
+      await supabase.from('treasury_transactions').insert({
+        treasury_id: selectedTreasuryId,
+        transaction_type: 'sale_payment',
+        reference_type: 'invoice',
+        reference_id: newInv.id,
+        reference_number: newInv.invoice_number,
+        description: `تحصيل قيمة الفاتورة ${newInv.invoice_number} من ${finalSelectedClient.fullName}`,
+        amount: grandTotal,
+        balance_before: currentBalance,
+        balance_after: newBalance,
+        created_by: salesAgent
+      });
+    }
+
     setView('manage-invoices');
   };
 
@@ -241,7 +358,7 @@ export default function CreateInvoiceView({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      
+
       {/* 1. Header Toolbar Actions */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-[#0d385a] text-white p-3.5 sm:p-4 rounded-lg shadow gap-3">
         <div className="flex items-center gap-2">
@@ -253,9 +370,8 @@ export default function CreateInvoiceView({
             <p className="text-[11px] text-slate-300">قم بتعبئة البنود والضرائب واختيار العميل لإصدار الفاتورة</p>
           </div>
         </div>
-        
+
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
-          {/* Print Save Button */}
           <button
             onClick={() => handleSaveDraft(alreadyPaid ? 'paid' : 'unpaid')}
             className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded text-xs font-bold transition-all shadow cursor-pointer active:scale-95"
@@ -264,7 +380,6 @@ export default function CreateInvoiceView({
             <span>حفظ وطباعة</span>
           </button>
 
-          {/* Preview Button */}
           <button
             onClick={() => {
               const client = clients.find(c => c.id === selectedClientId);
@@ -280,7 +395,6 @@ export default function CreateInvoiceView({
             <span>معاينة الفاتورة</span>
           </button>
 
-          {/* Save as Draft */}
           <button
             onClick={() => handleSaveDraft('draft')}
             className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-600 hover:bg-slate-700 hover:bg-opacity-85 rounded text-xs font-bold transition-all cursor-pointer"
@@ -291,24 +405,41 @@ export default function CreateInvoiceView({
         </div>
       </div>
 
-      {/* 2. Top box: Invoice Template Styling selector */}
-      <div className="bg-white rounded-lg border border-daftra-border shadow-sm p-4">
-        <label className="block text-xs font-bold text-slate-700 mb-1.5">قالب الفاتورة وطريقة الإخراج</label>
-        <select
-          value={billingTemplate}
-          onChange={(e) => setBillingTemplate(e.target.value)}
-          className="w-full max-w-sm px-3 py-2 bg-slate-50 border border-daftra-border rounded text-xs focus:ring-1 focus:ring-daftra-blue focus:outline-none"
-        >
-          <option value="التصميم الافتراضي للفاتورة">التصميم الافتراضي للفاتورة</option>
-          <option value="شريط علوي احترافي كلاسيكي">شريط علوي احترافي كلاسيكي (بدون ضريبة)</option>
-          <option value="قالب مبسط للعملاء الأفراد">قالب مبسط للعملاء الأفراد (مصر بوز)</option>
-          <option value="تصميم فواتير الخدمات السحابية">تصميم فواتير الخدمات السحابية (باهي)</option>
-        </select>
+      {/* 2. Top box: Invoice Template Styling selector + Warehouse */}
+      <div className="bg-white rounded-lg border border-daftra-border shadow-sm p-4 space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">قالب الفاتورة وطريقة الإخراج</label>
+            <select
+              value={billingTemplate}
+              onChange={(e) => setBillingTemplate(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-daftra-border rounded text-xs focus:ring-1 focus:ring-daftra-blue focus:outline-none"
+            >
+              <option value="التصميم الافتراضي للفاتورة">التصميم الافتراضي للفاتورة</option>
+              <option value="شريط علوي احترافي كلاسيكي">شريط علوي احترافي كلاسيكي (بدون ضريبة)</option>
+              <option value="قالب مبسط للعملاء الأفراد">قالب مبسط للعملاء الأفراد (مصر بوز)</option>
+              <option value="تصميم فواتير الخدمات السحابية">تصميم فواتير الخدمات السحابية (باهي)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">المستودع <span className="text-rose-500">*</span></label>
+            <select
+              value={selectedWarehouseId}
+              onChange={(e) => setSelectedWarehouseId(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-daftra-border rounded text-xs focus:ring-1 focus:ring-daftra-blue focus:outline-none"
+            >
+              <option value="">(اختر المستودع)</option>
+              {warehouses.map(w => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* 3. Main Form Details Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        
+
         {/* Right Section in RTL (Customer & General Methods) */}
         <div className="bg-white rounded-lg border border-daftra-border shadow-sm p-5 space-y-4">
           <h3 className="text-xs font-extrabold text-slate-800 border-b border-slate-100 pb-2 flex items-center gap-1 bg-slate-50/50 -m-5 mb-0 p-3 rounded-t-lg">
@@ -316,7 +447,6 @@ export default function CreateInvoiceView({
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-            {/* Method (الطريقة) */}
             <div className="space-y-1">
               <label className="block text-xs font-bold text-slate-700">الطريقة:</label>
               <select className="w-full px-3 py-2 bg-slate-50 border border-daftra-border rounded text-xs focus:ring-1 focus:ring-daftra-blue focus:outline-none">
@@ -326,7 +456,6 @@ export default function CreateInvoiceView({
               </select>
             </div>
 
-            {/* Client Select Form with asterisk (العميل) */}
             <div className="space-y-1">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-700">
@@ -358,7 +487,6 @@ export default function CreateInvoiceView({
             </div>
           </div>
 
-          {/* Active currency notice */}
           {selectedClientId && (
             <div className="bg-sky-50 text-[11px] text-[#006296] p-2.5 rounded border border-sky-100 flex items-center justify-between font-bold">
               <span>العملة المعتمدة لهذا العميل:</span>
@@ -374,7 +502,6 @@ export default function CreateInvoiceView({
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 text-xs">
-            {/* Invoice ID Code */}
             <div className="space-y-1">
               <label className="block font-bold text-slate-700">رقم الفاتورة:</label>
               <input
@@ -385,7 +512,6 @@ export default function CreateInvoiceView({
               />
             </div>
 
-            {/* Date */}
             <div className="space-y-1">
               <label className="block font-bold text-slate-700">تاريخ الفاتورة:</label>
               <input
@@ -396,7 +522,6 @@ export default function CreateInvoiceView({
               />
             </div>
 
-            {/* Sales Agent */}
             <div className="space-y-1">
               <label className="block font-bold text-slate-700">مسؤول مبيعات:</label>
               <select
@@ -410,7 +535,6 @@ export default function CreateInvoiceView({
               </select>
             </div>
 
-            {/* Issue Date */}
             <div className="space-y-1">
               <label className="block font-bold text-slate-700">تاريخ الاستحقاق:</label>
               <input
@@ -421,7 +545,6 @@ export default function CreateInvoiceView({
               />
             </div>
 
-            {/* Terms */}
             <div className="space-y-1 md:col-span-2">
               <label className="block font-bold text-slate-700">شروط الدفع:</label>
               <div className="flex gap-2">
@@ -438,7 +561,7 @@ export default function CreateInvoiceView({
         </div>
       </div>
 
-      {/* 4. Table Spreadsheet Spreadsheet Grid */}
+      {/* 4. Table Spreadsheet Grid */}
       <div className="bg-white rounded-lg border border-daftra-border shadow-sm overflow-hidden">
         <div className="bg-slate-50 border-b border-daftra-border px-4 py-3">
           <h3 className="text-xs font-extrabold text-slate-800 flex items-center justify-between">
@@ -447,7 +570,6 @@ export default function CreateInvoiceView({
           </h3>
         </div>
 
-        {/* Columns: Item, Description, Unit Price, Qty, Disc, Tax, Total */}
         <div className="overflow-x-auto">
           <table className="w-full text-right text-xs table-fixed min-w-[900px]">
             <thead className="bg-slate-50/75 text-slate-600 border-b border-daftra-border font-bold">
@@ -465,32 +587,48 @@ export default function CreateInvoiceView({
             <tbody className="divide-y divide-slate-100">
               {items.map((row, index) => (
                 <tr key={row.id} className="hover:bg-slate-50/30 transition-colors">
-                  {/* Item selector or input */}
                   <td className="p-3.5">
-                    <select
-                      value={row.itemName}
-                      onChange={(e) => handleUpdateRow(row.id, 'itemName', e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-yellow-50/15 border border-yellow-200 rounded font-bold text-slate-800 focus:outline-none focus:border-daftra-blue"
-                    >
-                      <option value="">(اختر بند مبيعات جاهز)</option>
-                      {INITIAL_PRODUCTS.map(p => (
-                        <option key={p.id} value={p.name}>
-                          {p.name} - [{p.price.toLocaleString('ar-EG')} جم]
-                        </option>
-                      ))}
-                      <option value="بند مخصص ومكتوب يدوياً">بند مبيعات مخصص يدوي...</option>
-                    </select>
-                    {row.itemName === 'بند مخصص ومكتوب يدوياً' && (
+                    <div className="relative">
                       <input
                         type="text"
-                        placeholder="اكتب اسم البند المخصص هنا..."
-                        onChange={(e) => handleUpdateRow(row.id, 'itemName', e.target.value)}
-                        className="w-full mt-1 px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:outline-none focus:border-daftra-blue"
+                        value={row.productId ? row.itemName : productSearchQuery}
+                        onChange={(e) => {
+                          setProductSearchQuery(e.target.value);
+                          setShowProductDropdown(prev => ({ ...prev, [row.id]: true }));
+                          if (!e.target.value) {
+                            handleUpdateRow(row.id, 'productId', '');
+                            handleUpdateRow(row.id, 'itemName', '');
+                          }
+                        }}
+                        onFocus={() => setShowProductDropdown(prev => ({ ...prev, [row.id]: true }))}
+                        onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [row.id]: false })), 200)}
+                        placeholder="ابحث عن منتج..."
+                        className="w-full px-2.5 py-1.5 bg-yellow-50/15 border border-yellow-200 rounded font-bold text-slate-800 focus:outline-none focus:border-daftra-blue"
                       />
-                    )}
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2.5 pointer-events-none" />
+                      {showProductDropdown[row.id] && (
+                        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                          {getFilteredProducts(productSearchQuery).map((p: any) => (
+                            <div
+                              key={p.id}
+                              onMouseDown={() => handleSelectProduct(row.id, p)}
+                              className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                            >
+                              <div>
+                                <span className="font-bold text-slate-700">{p.name}</span>
+                                <span className="text-[10px] text-slate-400 mr-1">{p.code}</span>
+                              </div>
+                              <span className="text-daftra-blue font-mono font-bold">{parseFloat(p.selling_price || 0).toLocaleString('ar-EG')} ج.م</span>
+                            </div>
+                          ))}
+                          {getFilteredProducts(productSearchQuery).length === 0 && (
+                            <div className="px-3 py-2 text-xs text-slate-400 text-center">لا توجد نتائج</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </td>
 
-                  {/* Description */}
                   <td className="p-3">
                     <textarea
                       rows={2}
@@ -501,7 +639,6 @@ export default function CreateInvoiceView({
                     />
                   </td>
 
-                  {/* Unit price */}
                   <td className="p-3">
                     <div className="relative">
                       <input
@@ -513,7 +650,6 @@ export default function CreateInvoiceView({
                     </div>
                   </td>
 
-                  {/* Quantity */}
                   <td className="p-3 text-center">
                     <input
                       type="number"
@@ -524,7 +660,6 @@ export default function CreateInvoiceView({
                     />
                   </td>
 
-                  {/* Row Discount */}
                   <td className="p-3">
                     <input
                       type="number"
@@ -535,7 +670,6 @@ export default function CreateInvoiceView({
                     />
                   </td>
 
-                  {/* Tax dropdown (بدون ضريبة / ضريبة القيمة المضافة) */}
                   <td className="p-3">
                     <select
                       value={row.taxValue}
@@ -549,13 +683,11 @@ export default function CreateInvoiceView({
                     </select>
                   </td>
 
-                  {/* Total item cost calculated */}
                   <td className="p-3 text-left font-mono font-bold text-slate-800">
                     <span className="text-xs">{row.total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span>
                     <span className="text-[10px] text-slate-400 mr-1.5">ج.م</span>
                   </td>
 
-                  {/* Delete button */}
                   <td className="p-3 text-center">
                     <button
                       type="button"
@@ -572,10 +704,7 @@ export default function CreateInvoiceView({
           </table>
         </div>
 
-        {/* Grid footer controller adding buttons on right, total on left */}
         <div className="bg-slate-50/50 border-t border-daftra-border px-4 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          
-          {/* Right portion adding row lines */}
           <div className="flex gap-2">
             <button
               onClick={handleAddRow}
@@ -585,10 +714,8 @@ export default function CreateInvoiceView({
               <Plus className="w-4 h-4 text-daftra-blue" />
               <span>إضافة سطر بند</span>
             </button>
-
           </div>
 
-          {/* Left portion displaying simple subtotal calculations */}
           <div className="flex flex-col items-end gap-1.5 text-xs text-slate-600 min-w-[200px] ml-4">
             <div className="flex justify-between w-full font-bold">
               <span>الإجمالي الفرعي (قبل الخصم والضريبة):</span>
@@ -604,10 +731,7 @@ export default function CreateInvoiceView({
 
       {/* 5. Bottom Tabs & Adjustment details & formatted Notes rich editor */}
       <div className="bg-white rounded-lg border border-daftra-border shadow-sm overflow-hidden grid grid-cols-1 md:grid-cols-12">
-        
-        {/* Right 8/12 - Notes details with Rich editor formatting toolbar and tabs */}
         <div className="md:col-span-8 p-5 border-l border-slate-100 space-y-4">
-          {/* Tabs bar */}
           <div className="border-b border-slate-100 flex flex-nowrap overflow-x-auto gap-1 pb-2">
             <button
               onClick={() => setActiveTab('discount')}
@@ -617,15 +741,11 @@ export default function CreateInvoiceView({
             >
               الخصم والتسوية
             </button>
-
           </div>
 
-          {/* Under tab content */}
           {activeTab === 'discount' && (
             <div className="bg-slate-50/50 p-4 rounded border border-slate-100 space-y-3.5 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                {/* Global Discount */}
                 <div className="space-y-1">
                   <label className="block text-xs font-bold text-slate-700">الخصم الإجمالي على الفاتورة:</label>
                   <div className="flex gap-2">
@@ -647,7 +767,6 @@ export default function CreateInvoiceView({
                   </div>
                 </div>
 
-                {/* Adjustment التسوية */}
                 <div className="space-y-1">
                   <label className="block text-xs font-bold text-slate-700">التسوية (إضافة / طرح قيمة تعديلية):</label>
                   <input
@@ -662,11 +781,8 @@ export default function CreateInvoiceView({
             </div>
           )}
 
-          {/* Notes Rich style Text area and simulation */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-700">الملاحظات / الشروط والأحكام الخاصة بالفاتورة:</label>
-            
-            {/* Rich style formatting bar like the screenshots exactly */}
             <div className="bg-slate-50 border border-daftra-border border-b-0 rounded-t p-1 flex flex-wrap items-center gap-1">
               <button type="button" className="p-1 px-1.5 hover:bg-slate-200 text-slate-600 font-bold rounded text-xs flex items-center gap-0.5" title="عريض" onClick={() => setNotes(prev => `**${prev}**`)}>
                 <Bold className="w-3.5 h-3.5" />
@@ -688,7 +804,6 @@ export default function CreateInvoiceView({
                 <Link2 className="w-3.5 h-3.5" />
               </button>
             </div>
-
             <textarea
               rows={4}
               value={notes}
@@ -698,17 +813,16 @@ export default function CreateInvoiceView({
           </div>
         </div>
 
-        {/* Left 4/12 - Immediate summary of Totals and direct checkbox already paid */}
         <div className="md:col-span-4 p-5 bg-slate-50/50 flex flex-col justify-between space-y-4">
           <div className="space-y-3.5">
             <h4 className="text-xs font-extrabold text-slate-800 pb-2 border-b border-slate-200">ملخص العمليات الحسابية النهائية</h4>
-            
+
             <div className="space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-500">مجموع البنود الفرعي:</span>
                 <span className="font-mono font-bold text-slate-700">{subtotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
               </div>
-              
+
               {globalDiscountValue > 0 && (
                 <div className="flex justify-between text-rose-600 font-semibold">
                   <span>قيمة خصم الفاتورة الإجمالي:</span>
@@ -723,7 +837,6 @@ export default function CreateInvoiceView({
                 </div>
               )}
 
-              {/* Grand Total */}
               <div className="flex justify-between border-t border-slate-200 pt-3 text-sm font-bold text-slate-800">
                 <span>الصافي المستحق النهائي:</span>
                 <span className="font-mono text-daftra-blue font-extrabold text-base">{grandTotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
@@ -731,7 +844,6 @@ export default function CreateInvoiceView({
             </div>
           </div>
 
-          {/* Already Paid Block (مدفوع بالفعل؟) */}
           <div className="bg-white p-3.5 rounded border border-daftra-border shadow-inner space-y-2.5">
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input
@@ -746,6 +858,37 @@ export default function CreateInvoiceView({
               يفضل وضع علامة صح عند استلام النقدية يداً بيد من العميل أو نجاح تصفية تحصيل الفيزا الإلكترونية ليرتفع مؤشر المبيعات فوراً.
             </p>
           </div>
+
+          {alreadyPaid && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded p-3 space-y-3 animate-fadeIn">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">طريقة الدفع</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                >
+                  <option value="نقدا">نقدا</option>
+                  <option value="بنك">بنك</option>
+                  <option value="شيك">شيك</option>
+                  <option value="تحويل">تحويل</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">الخزنة / الحساب البنكي</label>
+                <select
+                  value={selectedTreasuryId}
+                  onChange={(e) => setSelectedTreasuryId(e.target.value)}
+                  className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                >
+                  <option value="">(اختر الخزنة)</option>
+                  {safesBanks.map(sb => (
+                    <option key={sb.id} value={sb.id}>{sb.name} ({sb.type === 'safe' ? 'خزنة' : 'بنك'})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -753,7 +896,6 @@ export default function CreateInvoiceView({
       {isPreviewOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white w-full max-w-4xl rounded-lg shadow-2xl overflow-hidden flex flex-col animate-scaleIn max-h-[90vh]">
-            {/* Modal header details */}
             <div className="bg-[#0d385a] px-5 py-3.5 text-white flex justify-between items-center border-b border-daftra-blue">
               <div className="flex items-center gap-2 text-sm font-bold">
                 <FileCheck className="w-5 h-5 text-emerald-400" />
@@ -768,26 +910,20 @@ export default function CreateInvoiceView({
               </button>
             </div>
 
-            {/* Simulated Printed Invoice scroll area to inspect detail matches */}
             <div className="p-6 sm:p-8 flex-1 overflow-y-auto bg-[#f8fafc] text-slate-800 text-xs">
               <div className="bg-white p-6 sm:p-8 rounded-lg shadow-sm border border-slate-200 uppercase max-w-3xl mx-auto space-y-6 text-right">
-                
-                {/* Visual Company Header Block */}
                 <div className="flex justify-between items-start border-b border-slate-100 pb-5">
                   <div className="space-y-1">
                     <h1 className="text-base sm:text-lg font-black text-daftra-dark-blue">Abdo Yaser</h1>
                     <p className="text-[10px] text-slate-400">Main Branch - القاهرة، مصر</p>
                     <p className="text-[10px] text-slate-400">سجل تجاري: 48593/ق | بطاقة ضريبية: 738-429-105</p>
                   </div>
-                  
-                  {/* Logo block */}
                   <div className="text-left">
                     <span className="text-lg font-black tracking-widest text-[#0074b1]">DAFTRA ERP</span>
                     <div className="text-[10px] text-slate-400 mt-0.5">حلول برمجية سحابية موثقة</div>
                   </div>
                 </div>
 
-                {/* Bill Header Info Layout Grid */}
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div className="space-y-1 bg-slate-50 p-3 rounded border border-slate-100">
                     <span className="text-slate-400 font-bold block pb-1 border-b border-slate-200">العميل المعني بالفاتورة:</span>
@@ -828,7 +964,6 @@ export default function CreateInvoiceView({
                   </div>
                 </div>
 
-                {/* Items details table inside invoice */}
                 <div className="border border-slate-200 rounded overflow-hidden">
                   <table className="w-full text-right text-[11px] border-collapse">
                     <thead className="bg-slate-50 font-bold border-b border-slate-200 text-slate-700">
@@ -858,13 +993,11 @@ export default function CreateInvoiceView({
                   </table>
                 </div>
 
-                {/* Summary calculation parameters in printed box */}
                 <div className="flex justify-between items-start pt-4 border-t border-slate-100">
                   <div className="w-1/2 p-3 bg-slate-50 rounded text-[11px] leading-relaxed text-slate-600 font-medium">
                     <span className="font-bold text-slate-800 block mb-1">ملاحظات وشروط الفاتورة للمستلم:</span>
                     <p className="whitespace-pre-wrap">{notes}</p>
                   </div>
-                  
                   <div className="w-1/3 space-y-1.5 text-xs text-slate-700">
                     <div className="flex justify-between pb-1 border-b border-slate-100">
                       <span className="text-slate-400">الإجمالي الأولي:</span>
@@ -886,7 +1019,6 @@ export default function CreateInvoiceView({
                       <span className="text-daftra-blue">الصافي المطلوب:</span>
                       <span className="font-mono text-daftra-blue">{grandTotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
                     </div>
-
                     <div className="pt-4 flex justify-end">
                       <span className={`inline-block px-3 py-1 rounded text-[11px] font-black tracking-wide ${
                         alreadyPaid ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-red-100 text-red-700 border border-red-200'
@@ -897,7 +1029,6 @@ export default function CreateInvoiceView({
                   </div>
                 </div>
 
-                {/* QR code stamp block */}
                 <div className="pt-8 flex justify-between items-center text-slate-400 text-[10px] font-medium border-t border-dashed border-slate-100">
                   <div>
                     <span>تم التثبيت التلقائي وتدقيق الحساب عبر نظام مبيعات دفتره السحابي</span>
@@ -906,18 +1037,14 @@ export default function CreateInvoiceView({
                     QR CODE
                   </div>
                 </div>
-
               </div>
             </div>
 
-            {/* Close footer elements inside preview */}
             <div className="bg-slate-50 px-5 py-3.5 flex justify-end gap-2 border-t border-slate-200">
               <button
                 type="button"
                 className="px-4 py-2 bg-[#0d385a] hover:bg-[#082236] text-white text-xs font-bold rounded shadow cursor-pointer transition-colors"
-                onClick={() => {
-                  window.print();
-                }}
+                onClick={() => window.print()}
               >
                 تأكيد طباعة الورقة
               </button>

@@ -159,6 +159,10 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
   const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
   const [productSearchText, setProductSearchText] = useState<Record<string, string>>({});
 
+  // Treasury / Safes Banks
+  const [safesBanks, setSafesBanks] = useState<{ id: string; name: string; type: string; balance: number }[]>([]);
+  const [selectedTreasuryId, setSelectedTreasuryId] = useState<string>('');
+
   // Load from Supabase
   useEffect(() => {
     const loadData = async () => {
@@ -222,6 +226,16 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       } else {
         setProducts([]);
       }
+
+      const { data: safesData } = await supabase
+        .from('safes_banks')
+        .select('id, name, type, balance')
+        .eq('status', 'active');
+      if (safesData) {
+        setSafesBanks(safesData);
+      } else {
+        setSafesBanks([]);
+      }
     };
     loadData();
   }, [currentMode]);
@@ -229,10 +243,14 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
   // Recalculate row totals and grand totals whenever items, discounts, adjustments change
   useEffect(() => {
     let currentSubtotal = 0;
-    const computedItems = items.map(item => {
+    let sumLineTotals = 0;
+    items.forEach(item => {
       const rawTotal = item.unitPrice * item.quantity;
+      const rowDiscount = item.discount || 0;
+      const rowTax = rawTotal * (item.taxValue / 100);
+      const lineTotal = rawTotal - rowDiscount + rowTax;
       currentSubtotal += rawTotal;
-      return { ...item, total: rawTotal };
+      sumLineTotals += lineTotal;
     });
 
     setSubtotal(currentSubtotal);
@@ -245,13 +263,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       globalDiscount = globalDiscountValue;
     }
 
-    // Aggregate tax from row items
-    let aggregateTax = 0;
-    items.forEach(item => {
-      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
-    });
-
-    const finalTotal = currentSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
+    const finalTotal = sumLineTotals - globalDiscount + Number(adjustmentValue);
     setGrandTotal(Math.max(0, finalTotal));
   }, [items, globalDiscountType, globalDiscountValue, adjustmentValue]);
 
@@ -277,6 +289,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     setAdjustmentValue(0);
     setAlreadyPaid(false);
     setPaymentReference('');
+    setSelectedTreasuryId('');
     setShowProductDropdown({});
     setProductSearchText({});
     setItems([
@@ -379,15 +392,22 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       return;
     }
 
+    const effectiveStatus = alreadyPaid ? 'paid' : status;
+
     // Prepare Invoice Item Data
     let calculatedSubtotal = 0;
+    let sumLineTotals = 0;
     const finalItems = items.map(item => {
-      const rowTotal = item.unitPrice * item.quantity;
-      calculatedSubtotal += rowTotal;
+      const rawTotal = item.unitPrice * item.quantity;
+      const rowDiscount = item.discount || 0;
+      const rowTax = rawTotal * (item.taxValue / 100);
+      const lineTotal = rawTotal - rowDiscount + rowTax;
+      calculatedSubtotal += rawTotal;
+      sumLineTotals += lineTotal;
       return {
         ...item,
         itemName: item.itemName ? item.itemName : 'بند توريد جديد',
-        total: rowTotal
+        total: lineTotal
       };
     });
 
@@ -398,12 +418,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       globalDiscount = globalDiscountValue;
     }
 
-    let aggregateTax = 0;
-    finalItems.forEach(item => {
-      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
-    });
-
-    const calculatedGrandTotal = calculatedSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
+    const calculatedGrandTotal = sumLineTotals - globalDiscount + Number(adjustmentValue);
 
     const { data, error } = await supabase
       .from('purchase_invoices')
@@ -416,7 +431,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         sales_agent: 'أبو ياسر #000001 (أنت)',
         payment_terms: paymentTerms || 'فوري',
         items: finalItems,
-        status: alreadyPaid ? 'paid' : status,
+        status: effectiveStatus,
         discount_type: globalDiscountType,
         discount_value: globalDiscountValue,
         adjustment: adjustmentValue,
@@ -426,6 +441,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         already_paid: alreadyPaid,
         payment_method: alreadyPaid ? paymentMethod : '',
         payment_reference: alreadyPaid ? paymentReference : '',
+        treasury_id: alreadyPaid && selectedTreasuryId ? selectedTreasuryId : null,
         currency: currency,
         billing_template: billingTemplate,
       })
@@ -476,6 +492,37 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       .update({ balance: currentBal + calculatedGrandTotal })
       .eq('id', vendor.id);
 
+    // Treasury integration: deduct from treasury and record transaction
+    if (alreadyPaid && selectedTreasuryId) {
+      const { data: treasuryData } = await supabase
+        .from('safes_banks')
+        .select('balance')
+        .eq('id', selectedTreasuryId)
+        .single();
+      if (treasuryData) {
+        const balanceBefore = Number(treasuryData.balance) || 0;
+        const balanceAfter = balanceBefore - calculatedGrandTotal;
+        await supabase
+          .from('safes_banks')
+          .update({ balance: balanceAfter })
+          .eq('id', selectedTreasuryId);
+        await supabase
+          .from('treasury_transactions')
+          .insert({
+            treasury_id: selectedTreasuryId,
+            transaction_type: 'purchase_payment',
+            reference_type: 'purchase_invoice',
+            reference_id: data.id,
+            reference_number: invoiceNumber,
+            description: `دفعة فاتورة شراء #${invoiceNumber} - ${vendor.name}`,
+            amount: calculatedGrandTotal,
+            balance_before: balanceBefore,
+            balance_after: balanceAfter,
+            created_by: 'system',
+          });
+      }
+    }
+
     // Reset and return
     setCurrentMode('list');
   };
@@ -501,6 +548,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     setAlreadyPaid(invoice.alreadyPaid);
     setPaymentMethod(invoice.paymentMethod);
     setPaymentReference(invoice.paymentReference);
+    setSelectedTreasuryId((invoice as any).treasury_id || '');
     setShowProductDropdown({});
     setProductSearchText({});
     setCurrentMode('add');
@@ -515,14 +563,21 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       return;
     }
 
+    const effectiveStatus = alreadyPaid ? 'paid' : status;
+
     let calculatedSubtotal = 0;
+    let sumLineTotals = 0;
     const finalItems = items.map(item => {
-      const rowTotal = item.unitPrice * item.quantity;
-      calculatedSubtotal += rowTotal;
+      const rawTotal = item.unitPrice * item.quantity;
+      const rowDiscount = item.discount || 0;
+      const rowTax = rawTotal * (item.taxValue / 100);
+      const lineTotal = rawTotal - rowDiscount + rowTax;
+      calculatedSubtotal += rawTotal;
+      sumLineTotals += lineTotal;
       return {
         ...item,
         itemName: item.itemName ? item.itemName : 'بند توريد جديد',
-        total: rowTotal
+        total: lineTotal
       };
     });
 
@@ -533,12 +588,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       globalDiscount = globalDiscountValue;
     }
 
-    let aggregateTax = 0;
-    finalItems.forEach(item => {
-      aggregateTax += item.unitPrice * item.quantity * (item.taxValue / 100);
-    });
-
-    const calculatedGrandTotal = calculatedSubtotal - globalDiscount + aggregateTax + Number(adjustmentValue);
+    const calculatedGrandTotal = sumLineTotals - globalDiscount + Number(adjustmentValue);
 
     const { data, error } = await supabase
       .from('purchase_invoices')
@@ -551,7 +601,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         sales_agent: 'أبو ياسر #000001 (أنت)',
         payment_terms: paymentTerms || 'فوري',
         items: finalItems,
-        status: alreadyPaid ? 'paid' : status,
+        status: effectiveStatus,
         discount_type: globalDiscountType,
         discount_value: globalDiscountValue,
         adjustment: adjustmentValue,
@@ -561,6 +611,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         already_paid: alreadyPaid,
         payment_method: alreadyPaid ? paymentMethod : '',
         payment_reference: alreadyPaid ? paymentReference : '',
+        treasury_id: alreadyPaid && selectedTreasuryId ? selectedTreasuryId : null,
         currency: currency,
         billing_template: billingTemplate,
       })
@@ -585,6 +636,37 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       .from('purchase_vendors')
       .update({ balance: currentBal + calculatedGrandTotal })
       .eq('id', vendor.id);
+
+    // Treasury integration: deduct from treasury and record transaction
+    if (alreadyPaid && selectedTreasuryId) {
+      const { data: treasuryData } = await supabase
+        .from('safes_banks')
+        .select('balance')
+        .eq('id', selectedTreasuryId)
+        .single();
+      if (treasuryData) {
+        const balanceBefore = Number(treasuryData.balance) || 0;
+        const balanceAfter = balanceBefore - calculatedGrandTotal;
+        await supabase
+          .from('safes_banks')
+          .update({ balance: balanceAfter })
+          .eq('id', selectedTreasuryId);
+        await supabase
+          .from('treasury_transactions')
+          .insert({
+            treasury_id: selectedTreasuryId,
+            transaction_type: 'purchase_payment',
+            reference_type: 'purchase_invoice',
+            reference_id: editingInvoiceId,
+            reference_number: invoiceNumber,
+            description: `دفعة فاتورة شراء #${invoiceNumber} - ${vendor.name}`,
+            amount: calculatedGrandTotal,
+            balance_before: balanceBefore,
+            balance_after: balanceAfter,
+            created_by: 'system',
+          });
+      }
+    }
 
     // Reload full invoice list
     setEditingInvoiceId(null);
@@ -1270,7 +1352,12 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
                         {/* Total per row */}
                         <td className="p-2 text-left font-mono font-black text-slate-800">
-                          {item.total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} {currency}
+                          {(() => {
+                            const raw = item.unitPrice * item.quantity;
+                            const rowDisc = item.discount || 0;
+                            const rowT = raw * (item.taxValue / 100);
+                            return (raw - rowDisc + rowT).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                          })()} {currency}
                         </td>
 
                         {/* Delete Row Action */}
@@ -1484,7 +1571,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
               </label>
 
               {alreadyPaid && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-150 text-right animate-fadeIn">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-150 text-right animate-fadeIn">
                   
                   {/* Payment method selector */}
                   <div className="space-y-1.5">
@@ -1498,6 +1585,23 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                       <option value="تحويل بنكي">تحويل بنكي الكتروني</option>
                       <option value="فودافون كاش">محفظة فودافون كاش / اتصالات</option>
                       <option value="شيك">شيك بنكي مؤجل</option>
+                    </select>
+                  </div>
+
+                  {/* Treasury / Bank Account selector */}
+                  <div className="space-y-1.5">
+                    <span className="text-slate-500 font-bold block">الخزينة / الحساب البنكي</span>
+                    <select
+                      value={selectedTreasuryId}
+                      onChange={(e) => setSelectedTreasuryId(e.target.value)}
+                      className="w-full text-right p-2 bg-white border border-slate-200 rounded font-semibold"
+                    >
+                      <option value="">اختر الخزينة</option>
+                      {safesBanks.map(sb => (
+                        <option key={sb.id} value={sb.id}>
+                          {sb.name} ({sb.type === 'bank' ? 'بنكي' : 'نقدي'}) - الرصيد: {Number(sb.balance).toLocaleString()}
+                        </option>
+                      ))}
                     </select>
                   </div>
 

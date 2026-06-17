@@ -25,7 +25,8 @@ import {
   User,
   Inbox,
   FileText,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Search
 } from 'lucide-react';
 
 // Stock Voucher interface
@@ -61,6 +62,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
   // --- Real datasets loaded from localStorage ---
   const [clientsList, setClientsList] = useState<any[]>([]);
   const [productsList, setProductsList] = useState<any[]>([]);
+  const [warehousesList, setWarehousesList] = useState<any[]>([]);
 
   // --- Filter states (matches the mockup design fields) ---
   const [filterBranch, setFilterBranch] = useState<string>('الكل');
@@ -98,6 +100,9 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
     { productId: '', quantity: 1 }
   ]);
 
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [showProductDropdown, setShowProductDropdown] = useState<Record<number, boolean>>({});
+
   const mapVoucherRow = (row: any): StockVoucher => ({
     id: row.id,
     voucherNumber: row.voucher_number || '',
@@ -117,7 +122,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
     notes: row.notes || '',
   });
 
-  // Load clients, products and existing vouchers from Supabase
+  // Load clients, products, warehouses and existing vouchers from Supabase
   useEffect(() => {
     supabase.from('clients').select('*').order('created_at', { ascending: false }).then(({ data }) => {
       if (data) setClientsList(data);
@@ -127,6 +132,11 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
     supabase.from('products').select('*').order('created_at', { ascending: false }).then(({ data }) => {
       if (data) setProductsList(data);
       else setProductsList([]);
+    });
+
+    supabase.from('warehouses').select('id, name').then(({ data }) => {
+      if (data) setWarehousesList(data);
+      else setWarehousesList([]);
     });
 
     supabase.from('inventory_vouchers').select('*').order('created_at', { ascending: false }).then(({ data }) => {
@@ -273,11 +283,53 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
       notes: newNotes || null,
     };
 
-    const { error } = await supabase.from('inventory_vouchers').insert(row);
-    if (!error) {
+    const { data: inserted, error } = await supabase.from('inventory_vouchers').insert(row).select().single();
+    if (!error && inserted) {
       const { data } = await supabase.from('inventory_vouchers').select('*').order('created_at', { ascending: false });
       if (data) setVouchers(data.map(mapVoucherRow));
       setIsAddingVoucher(false);
+
+      // Record inventory movements
+      const matchedWarehouse = warehousesList.find(w => w.name === newWarehouse);
+      if (matchedWarehouse && newStatus === 'مكتمل') {
+        for (const vi of voucherItems) {
+          if (!vi.productId) continue;
+          const qtyChange = newType === 'إذن إضافة' ? vi.quantity : -vi.quantity;
+
+          const { data: stock } = await supabase
+            .from('warehouse_stock')
+            .select('quantity')
+            .eq('product_id', vi.productId)
+            .eq('warehouse_id', matchedWarehouse.id)
+            .maybeSingle();
+
+          const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
+          const qtyAfter = qtyBefore + qtyChange;
+
+          await supabase
+            .from('warehouse_stock')
+            .upsert({
+              product_id: vi.productId,
+              warehouse_id: matchedWarehouse.id,
+              quantity: qtyAfter
+            }, { onConflict: 'product_id,warehouse_id' });
+
+          await supabase
+            .from('inventory_movements')
+            .insert({
+              product_id: vi.productId,
+              warehouse_id: matchedWarehouse.id,
+              movement_type: 'adjustment',
+              reference_type: 'inventory_voucher',
+              reference_id: inserted.id,
+              reference_number: inserted.voucher_number,
+              qty_before: qtyBefore,
+              qty_change: qtyChange,
+              qty_after: qtyAfter,
+              created_by: newAddedBy
+            });
+        }
+      }
     }
   };
 
@@ -380,18 +432,19 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
 
                 {/* Row 2: Warehouse & Branch */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-slate-500 font-bold">المستودع</label>
-                    <select
-                      value={newWarehouse}
-                      onChange={(e) => setNewWarehouse(e.target.value)}
-                      className="w-full border border-slate-300 rounded p-1.5 text-xs bg-white text-right focus:outline-none focus:border-[#0074b1]"
-                    >
-                      <option value="المستودع الرئيسي">المستودع الرئيسي</option>
-                      <option value="مستودع الرياض">مستودع الرياض</option>
-                      <option value="مستودع جدة">مستودع جدة</option>
-                    </select>
-                  </div>
+                    <div className="space-y-1">
+                      <label className="block text-slate-500 font-bold">المستودع</label>
+                      <select
+                        value={newWarehouse}
+                        onChange={(e) => setNewWarehouse(e.target.value)}
+                        className="w-full border border-slate-300 rounded p-1.5 text-xs bg-white text-right focus:outline-none focus:border-[#0074b1]"
+                      >
+                        <option value="">(اختر المستودع)</option>
+                        {warehousesList.map((w: any) => (
+                          <option key={w.id} value={w.name}>{w.name}</option>
+                        ))}
+                      </select>
+                    </div>
 
                   <div className="space-y-1">
                     <label className="block text-slate-500 font-bold">الفرع</label>
@@ -526,18 +579,55 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
                   <div key={index} className="flex gap-2 items-center border-b border-dashed border-slate-100 pb-3 flex-row-reverse">
                     
                     {/* Item Select */}
-                    <div className="flex-1 space-y-1 text-right">
+                    <div className="flex-1 space-y-1 text-right relative">
                       <label className="block text-[10px] text-slate-400 font-bold">المنتج / البند</label>
-                      <select
-                        value={item.productId}
-                        onChange={(e) => handleItemSelectChange(e.target.value, index)}
-                        className="w-full border border-slate-300 rounded p-1 text-xs bg-white text-right"
-                      >
-                        <option value="">-- اختر البند --</option>
-                        {productsList.map(p => (
-                          <option key={p.id} value={p.id}>{p.name} (SKU: {p.code})</option>
-                        ))}
-                      </select>
+                      <input
+                        type="text"
+                        placeholder="ابحث عن منتج..."
+                        value={item.productId ? productsList.find((p: any) => p.id === item.productId)?.name || '' : productSearchQuery}
+                        onChange={(e) => {
+                          setProductSearchQuery(e.target.value);
+                          setShowProductDropdown(prev => ({ ...prev, [index]: true }));
+                          if (!e.target.value) {
+                            handleItemSelectChange('', index);
+                          }
+                        }}
+                        onFocus={() => setShowProductDropdown(prev => ({ ...prev, [index]: true }))}
+                        onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [index]: false })), 200)}
+                        className="w-full border border-slate-300 rounded p-1 text-xs bg-white text-right pr-7"
+                      />
+                      <Search className="w-3 h-3 text-slate-400 absolute left-2 top-[26px] pointer-events-none" />
+                      {showProductDropdown[index] && (
+                        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-40 overflow-y-auto">
+                          {(productSearchQuery.trim()
+                            ? productsList.filter((p: any) =>
+                                p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                                (p.code && p.code.toLowerCase().includes(productSearchQuery.toLowerCase()))
+                              )
+                            : productsList
+                          ).map((p: any) => (
+                            <div
+                              key={p.id}
+                              onMouseDown={() => {
+                                handleItemSelectChange(p.id, index);
+                                setShowProductDropdown(prev => ({ ...prev, [index]: false }));
+                                setProductSearchQuery('');
+                              }}
+                              className="px-3 py-1.5 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between"
+                            >
+                              <span className="font-bold text-slate-700">{p.name}</span>
+                              <span className="text-slate-400">{p.code}</span>
+                            </div>
+                          ))}
+                          {productsList.filter((p: any) =>
+                            productSearchQuery.trim()
+                              ? p.name.toLowerCase().includes(productSearchQuery.toLowerCase())
+                              : true
+                          ).length === 0 && (
+                            <div className="px-3 py-2 text-xs text-slate-400 text-center">لا توجد نتائج</div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Quantity */}
@@ -760,22 +850,22 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
               />
             </div>
 
-            {/* المستودع */}
-            <div className="space-y-1.5">
-              <label className="block text-slate-500 text-xs font-bold font-sans">
-                المستودع
-              </label>
-              <select
-                value={filterWarehouse}
-                onChange={(e) => setFilterWarehouse(e.target.value)}
-                className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs text-slate-600 bg-white focus:outline-none focus:border-[#0074b1] transition-all text-right shadow-2xs"
-              >
-                <option value="الكل">الكل</option>
-                <option value="المستودع الرئيسي">المستودع الرئيسي</option>
-                <option value="مستودع الرياض">مستودع الرياض</option>
-                <option value="مستودع جدة">مستودع جدة</option>
-              </select>
-            </div>
+              {/* المستودع */}
+              <div className="space-y-1.5">
+                <label className="block text-slate-500 text-xs font-bold font-sans">
+                  المستودع
+                </label>
+                <select
+                  value={filterWarehouse}
+                  onChange={(e) => setFilterWarehouse(e.target.value)}
+                  className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs text-slate-600 bg-white focus:outline-none focus:border-[#0074b1] transition-all text-right shadow-2xs"
+                >
+                  <option value="الكل">الكل</option>
+                  {warehousesList.map((w: any) => (
+                    <option key={w.id} value={w.name}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
 
             {/* العميل */}
             <div className="space-y-1.5 text-right">
