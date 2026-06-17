@@ -59,6 +59,11 @@ export interface Client {
   notes: string;
   category: string;
   billingMethod: string;
+  startDate?: string;
+  targetWeight?: number;
+  lastWeight?: number;
+  followUpCount?: number;
+  nextFollowUp?: string;
 }
 
 export interface ProductService {

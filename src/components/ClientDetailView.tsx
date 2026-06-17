@@ -1,31 +1,9 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  User,
-  Phone,
-  Calendar,
-  Weight,
-  Activity,
-  MessageCircle,
-  ArrowRight,
-  Plus,
-  Trash2,
-  Save,
-  X,
-  Edit3,
-  Scale,
-  Hash,
-  FileText,
-  Heart,
-  Ruler,
-  TrendingUp,
-  TrendingDown,
-  Minus
+  User, Phone, Calendar, Weight, Activity, MessageCircle,
+  ArrowRight, Plus, Trash2, Save, X, Edit3, Scale,
+  FileText, TrendingUp, TrendingDown, Minus, Target, Clock
 } from 'lucide-react';
 import { Client, WeightRecord } from '../types';
 import { supabase } from '../lib/supabase';
@@ -42,25 +20,24 @@ const formatDate = (d: string) => {
   return d;
 };
 
+const todayStr = () => new Date().toISOString().split('T')[0];
+
 export default function ClientDetailView({ clientId, onBack }: ClientDetailViewProps) {
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
   const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formDate, setFormDate] = useState(todayStr());
   const [formWeight, setFormWeight] = useState('');
   const [formNotes, setFormNotes] = useState('');
   const [generalNotes, setGeneralNotes] = useState('');
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [targetWeightVal, setTargetWeightVal] = useState('');
+  const [startDateVal, setStartDateVal] = useState('');
   const formRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadClient();
-    loadWeights();
-    loadNotes();
-  }, [clientId]);
-
-  const loadClient = async () => {
+  const loadClient = useCallback(async () => {
     const { data } = await supabase.from('clients').select('*').eq('id', clientId).single();
     if (data) {
       setClient({
@@ -86,12 +63,18 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
         notes: data.notes || '',
         category: data.category || '',
         billingMethod: data.billing_method || '',
+        startDate: data.start_date || '',
+        targetWeight: data.target_weight || 0,
+        nextFollowUp: data.next_follow_up || '',
       });
+      setFollowUpDate(data.next_follow_up || '');
+      setTargetWeightVal(data.target_weight ? String(data.target_weight) : '');
+      setStartDateVal(data.start_date || '');
     }
     setLoading(false);
-  };
+  }, [clientId]);
 
-  const loadWeights = async () => {
+  const loadWeights = useCallback(async () => {
     const { data } = await supabase
       .from('weight_records')
       .select('*')
@@ -101,14 +84,14 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
       setWeightRecords(data.map((r: any) => ({
         id: r.id,
         clientId: r.client_id,
-        date: r.date,
+        date: r.date || '',
         weight: r.weight,
         notes: r.notes || '',
       })));
     }
-  };
+  }, [clientId]);
 
-  const loadNotes = async () => {
+  const loadNotes = useCallback(async () => {
     const { data } = await supabase
       .from('client_notes')
       .select('*')
@@ -117,23 +100,45 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     if (data) {
       setGeneralNotes(data.content || '');
     }
-  };
+  }, [clientId]);
 
-  const clientRecords = weightRecords
-    .sort((a, b) => b.date.localeCompare(a.date));
+  useEffect(() => {
+    loadClient();
+    loadWeights();
+    loadNotes();
+  }, [loadClient, loadWeights, loadNotes]);
 
+  const clientRecords = weightRecords;
   const lastRecord = clientRecords[0];
   const prevRecord = clientRecords[1];
   const weightDiff = lastRecord && prevRecord ? lastRecord.weight - prevRecord.weight : 0;
   const followUpCount = clientRecords.length;
+  const targetDiff = lastRecord && parseFloat(targetWeightVal) ? lastRecord.weight - parseFloat(targetWeightVal) : 0;
+
+  const autoSaveFollowUp = async (val: string) => {
+    setFollowUpDate(val);
+    await supabase.from('clients').update({ next_follow_up: val }).eq('id', clientId);
+  };
+
+  const autoSaveTargetWeight = async (val: string) => {
+    setTargetWeightVal(val);
+    const num = parseFloat(val) || 0;
+    await supabase.from('clients').update({ target_weight: num }).eq('id', clientId);
+  };
+
+  const autoSaveStartDate = async (val: string) => {
+    setStartDateVal(val);
+    await supabase.from('clients').update({ start_date: val }).eq('id', clientId);
+  };
 
   const handleAdd = async () => {
     if (!formWeight || !formDate) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('weight_records')
       .insert({ client_id: clientId, date: formDate, weight: parseFloat(formWeight), notes: formNotes })
       .select()
       .single();
+    if (error) { alert('خطأ في الحفظ: ' + error.message); return; }
     if (data) {
       setWeightRecords(prev => [{
         id: data.id,
@@ -157,10 +162,11 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
 
   const handleUpdate = async () => {
     if (!formWeight || !formDate || !editingId) return;
-    await supabase
+    const { error } = await supabase
       .from('weight_records')
       .update({ date: formDate, weight: parseFloat(formWeight), notes: formNotes })
       .eq('id', editingId);
+    if (error) { alert('خطأ في التحديث: ' + error.message); return; }
     setWeightRecords(prev => prev.map(r =>
       r.id === editingId ? { ...r, date: formDate, weight: parseFloat(formWeight), notes: formNotes } : r
     ));
@@ -170,12 +176,13 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('weight_records').delete().eq('id', id);
+    const { error } = await supabase.from('weight_records').delete().eq('id', id);
+    if (error) { alert('خطأ في الحذف: ' + error.message); return; }
     setWeightRecords(prev => prev.filter(r => r.id !== id));
   };
 
   const resetForm = () => {
-    setFormDate(new Date().toISOString().split('T')[0]);
+    setFormDate(todayStr());
     setFormWeight('');
     setFormNotes('');
     setEditingId(null);
@@ -184,7 +191,7 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
   const handleSaveNotes = async () => {
     const existing = await supabase.from('client_notes').select('id').eq('client_id', clientId).maybeSingle();
     if (existing.data) {
-      await supabase.from('client_notes').update({ content: generalNotes, updated_at: new Date().toISOString() }).eq('client_id', clientId);
+      await supabase.from('client_notes').update({ content: generalNotes }).eq('client_id', clientId);
     } else {
       await supabase.from('client_notes').insert({ client_id: clientId, content: generalNotes });
     }
@@ -195,10 +202,14 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     if (!cleanPhone) return;
     const weightStr = lastRecord ? `${lastRecord.weight} كجم` : 'غير مسجل';
-    const dateStr = lastRecord ? formatDate(lastRecord.date) : '--';
+    const targetStr = parseFloat(targetWeightVal) ? `${targetWeightVal} كجم` : 'غير محدد';
+    const diffStr = lastRecord && parseFloat(targetWeightVal)
+      ? (Math.abs(targetDiff).toFixed(1) + (targetDiff > 0 ? ' كجم زيادة' : ' كجم نقص'))
+      : '--';
     const notesStr = lastRecord?.notes || 'لا يوجد';
+    const followUpStr = followUpDate ? formatDate(followUpDate) : 'غير محدد';
     const msg = encodeURIComponent(
-      `مرحباً ${client?.fullName || 'العميل'}\n\nآخر تحديث للمتابعة:\nالوزن: ${weightStr}\nالتاريخ: ${dateStr}\nالملاحظات:\n${notesStr}\n\nنتمنى لك التوفيق.`
+      `مرحباً ${client?.fullName || 'العميل'}\n\nملخص المتابعة الخاص بك:\n• آخر وزن: ${weightStr}\n• عدد المتابعات: ${followUpCount}\n• الوزن المستهدف: ${targetStr}\n• الفرق المتبقي: ${diffStr}\n• موعد المتابعة القادمة: ${followUpStr}\n\nنتمنى لك التوفيق والاستمرار في تحقيق أهدافك.\n\nملاحظات:\n${notesStr}`
     );
     window.open(`https://wa.me/${cleanPhone}?text=${msg}`, '_blank');
   };
@@ -263,8 +274,9 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
             <Calendar className="w-4.5 h-4.5 text-amber-600" />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] text-slate-400 font-bold">تاريخ الإضافة</p>
-            <p className="text-xs font-black text-slate-800">{client.codeNumber ? `#${client.codeNumber}` : '-'}</p>
+            <p className="text-[10px] text-slate-400 font-bold">تاريخ بداية المتابعة</p>
+            <input type="date" value={startDateVal} onChange={e => autoSaveStartDate(e.target.value)}
+              className="text-xs font-black text-slate-800 bg-transparent border-none p-0 focus:outline-none cursor-pointer [color-scheme:light]" />
           </div>
         </div>
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex items-center gap-3">
@@ -289,22 +301,48 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
         </div>
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-sky-50 flex items-center justify-center shrink-0">
-            {weightDiff > 0 ? <TrendingUp className="w-4.5 h-4.5 text-red-500" /> :
-             weightDiff < 0 ? <TrendingDown className="w-4.5 h-4.5 text-emerald-500" /> :
+            {targetDiff > 0 ? <TrendingUp className="w-4.5 h-4.5 text-red-500" /> :
+             targetDiff < 0 ? <TrendingDown className="w-4.5 h-4.5 text-emerald-500" /> :
              <Minus className="w-4.5 h-4.5 text-slate-400" />}
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] text-slate-400 font-bold">الفرق عن السابق</p>
-            <p className={`text-xs font-black ${weightDiff > 0 ? 'text-red-500' : weightDiff < 0 ? 'text-emerald-500' : 'text-slate-500'}`}>
-              {weightDiff !== 0 ? `${weightDiff > 0 ? '+' : ''}${weightDiff} كجم` : 'ثابت'}
+            <p className="text-[10px] text-slate-400 font-bold">الفرق عن الهدف</p>
+            <p className={`text-xs font-black ${targetDiff > 0 ? 'text-red-500' : targetDiff < 0 ? 'text-emerald-500' : 'text-slate-500'}`}>
+              {targetDiff !== 0 ? `${targetDiff > 0 ? '+' : ''}${targetDiff.toFixed(1)} كجم` : 'حقق الهدف'}
             </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Second Row: Target Weight + Next Follow-up */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
+            <Target className="w-5 h-5 text-indigo-600" />
+          </div>
+          <div className="flex-1">
+            <p className="text-[10px] text-slate-400 font-bold mb-1">الوزن المستهدف (كجم)</p>
+            <input type="number" step="0.1" min="0" value={targetWeightVal}
+              onChange={e => autoSaveTargetWeight(e.target.value)}
+              placeholder="أدخل الوزن المستهدف"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 [appearance:textfield]" />
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center shrink-0">
+            <Clock className="w-5 h-5 text-teal-600" />
+          </div>
+          <div className="flex-1">
+            <p className="text-[10px] text-slate-400 font-bold mb-1">موعد المتابعة القادمة</p>
+            <input type="date" value={followUpDate}
+              onChange={e => autoSaveFollowUp(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/20 cursor-pointer [color-scheme:light]" />
           </div>
         </div>
       </div>
 
       {/* WhatsApp + Notes Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* WhatsApp Button */}
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col items-center justify-center gap-3">
           <button onClick={openWhatsApp}
             className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-200 transition-all hover:scale-105 active:scale-95 cursor-pointer">
@@ -316,7 +354,6 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           </p>
         </div>
 
-        {/* General Notes */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
@@ -357,7 +394,6 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           )}
         </div>
 
-        {/* Add/Edit Form */}
         <AnimatePresence>
           {showAddForm && (
             <motion.div
@@ -411,7 +447,6 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           )}
         </AnimatePresence>
 
-        {/* Weight Records Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-right text-xs">
             <thead>
@@ -478,18 +513,18 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           </table>
         </div>
 
-        {/* Last update summary */}
         {lastRecord && (
           <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/30 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[11px] text-slate-500 font-semibold">
-              <Heart className="w-3.5 h-3.5 text-rose-400" />
-              <span>آخر تحديث للوزن: <span className="font-black text-slate-800">{lastRecord.weight} كجم</span></span>
+              <Weight className="w-3.5 h-3.5 text-purple-400" />
+              <span>آخر وزن: <span className="font-black text-slate-800">{lastRecord.weight} كجم</span></span>
               <span className="text-slate-300">|</span>
-              <span>تاريخ القياس: <span className="font-black text-slate-800">{formatDate(lastRecord.date)}</span></span>
-              {lastRecord.notes && (
+              <span>{formatDate(lastRecord.date)}</span>
+              {followUpDate && (
                 <>
                   <span className="text-slate-300">|</span>
-                  <span>الملاحظات: <span className="font-black text-slate-800">{lastRecord.notes}</span></span>
+                  <Clock className="w-3 h-3 text-teal-400" />
+                  <span>المتابعة القادمة: <span className="font-black text-slate-800">{formatDate(followUpDate)}</span></span>
                 </>
               )}
             </div>
