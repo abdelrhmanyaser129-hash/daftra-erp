@@ -81,15 +81,17 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
       .from('weight_records')
       .select('*')
       .eq('client_id', clientId)
-      .order('date', { ascending: false });
+      .maybeSingle();
     if (data) {
-      setWeightRecords(data.map((r: any) => ({
-        id: r.id,
-        clientId: r.client_id,
-        date: r.date || '',
-        weight: r.weight,
-        notes: r.notes || '',
-      })));
+      setWeightRecords([{
+        id: data.id,
+        clientId: data.client_id,
+        date: data.date || '',
+        weight: data.weight,
+        notes: data.notes || '',
+      }]);
+    } else {
+      setWeightRecords([]);
     }
   }, [clientId]);
 
@@ -110,12 +112,9 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     loadNotes();
   }, [loadClient, loadWeights, loadNotes]);
 
-  const clientRecords = weightRecords;
-  const lastRecord = clientRecords[0];
-  const prevRecord = clientRecords[1];
-  const weightDiff = lastRecord && prevRecord ? lastRecord.weight - prevRecord.weight : 0;
-  const followUpCount = clientRecords.length;
-  const targetDiff = lastRecord && parseFloat(targetWeightVal) ? lastRecord.weight - parseFloat(targetWeightVal) : 0;
+  const currentRecord = weightRecords[0] || null;
+  const followUpCount = currentRecord ? 1 : 0;
+  const targetDiff = currentRecord && parseFloat(targetWeightVal) ? currentRecord.weight - parseFloat(targetWeightVal) : 0;
 
   const autoSaveFollowUp = async (val: string) => {
     setFollowUpDate(val);
@@ -135,25 +134,16 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
 
   const handleAdd = async () => {
     if (!formWeight || !formDate) return;
-    const { data, error } = await supabase
-      .from('weight_records')
-      .insert({ client_id: clientId, date: formDate, weight: parseFloat(formWeight), notes: formNotes })
-      .select()
-      .single();
-    if (error) { alert('خطأ في الحفظ: ' + error.message); return; }
-    if (data) {
-      setWeightRecords(prev => [{
-        id: data.id,
-        clientId: data.client_id,
-        date: data.date,
-        weight: data.weight,
-        notes: data.notes || '',
-      }, ...prev]);
+    const { data: existing } = await supabase.from('weight_records').select('id').eq('client_id', clientId).maybeSingle();
+    if (existing) {
+      await supabase.from('weight_records').update({ date: formDate, weight: parseFloat(formWeight), notes: formNotes }).eq('id', existing.id);
+      setWeightRecords([{ id: existing.id, clientId: clientId, date: formDate, weight: parseFloat(formWeight), notes: formNotes }]);
+    } else {
+      const { data, error } = await supabase.from('weight_records').insert({ client_id: clientId, date: formDate, weight: parseFloat(formWeight), notes: formNotes }).select().single();
+      if (error) { alert('خطأ في الحفظ: ' + error.message); return; }
+      if (data) setWeightRecords([{ id: data.id, clientId: data.client_id, date: data.date, weight: data.weight, notes: data.notes || '' }]);
     }
-    await supabase.from('clients').update({
-      last_weight: parseFloat(formWeight),
-      follow_up_count: weightRecords.length + 1
-    }).eq('id', clientId);
+    await supabase.from('clients').update({ last_weight: parseFloat(formWeight), follow_up_count: 1 }).eq('id', clientId);
     setShowAddForm(false);
     resetForm();
   };
@@ -176,6 +166,7 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     setWeightRecords(prev => prev.map(r =>
       r.id === editingId ? { ...r, date: formDate, weight: parseFloat(formWeight), notes: formNotes } : r
     ));
+    await supabase.from('clients').update({ last_weight: parseFloat(formWeight) }).eq('id', clientId);
     setEditingId(null);
     setShowAddForm(false);
     resetForm();
@@ -184,13 +175,8 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('weight_records').delete().eq('id', id);
     if (error) { alert('خطأ في الحذف: ' + error.message); return; }
-    const updated = weightRecords.filter(r => r.id !== id);
-    setWeightRecords(updated);
-    const latest = updated.length > 0 ? updated[0].weight : 0;
-    await supabase.from('clients').update({
-      last_weight: latest,
-      follow_up_count: updated.length
-    }).eq('id', clientId);
+    setWeightRecords([]);
+    await supabase.from('clients').update({ last_weight: null, follow_up_count: 0 }).eq('id', clientId);
   };
 
   const resetForm = () => {
@@ -213,12 +199,12 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
     const phone = client?.phone || client?.mobile || '';
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     if (!cleanPhone) return;
-    const weightStr = lastRecord ? `${lastRecord.weight} كجم` : 'غير مسجل';
+    const weightStr = currentRecord ? `${currentRecord.weight} كجم` : 'غير مسجل';
     const targetStr = parseFloat(targetWeightVal) ? `${targetWeightVal} كجم` : 'غير محدد';
-    const diffStr = lastRecord && parseFloat(targetWeightVal)
+    const diffStr = currentRecord && parseFloat(targetWeightVal)
       ? (Math.abs(targetDiff).toFixed(1) + (targetDiff > 0 ? ' كجم زيادة' : ' كجم نقص'))
       : '--';
-    const notesStr = lastRecord?.notes || 'لا يوجد';
+    const notesStr = currentRecord?.notes || 'لا يوجد';
     const followUpStr = followUpDate ? formatDate(followUpDate) : 'غير محدد';
     const msg = encodeURIComponent(
       `مرحباً ${client?.fullName || 'العميل'}\n\nملخص المتابعة الخاص بك:\n• آخر وزن: ${weightStr}\n• عدد المتابعات: ${followUpCount}\n• الوزن المستهدف: ${targetStr}\n• الفرق المتبقي: ${diffStr}\n• موعد المتابعة القادمة: ${followUpStr}\n\nنتمنى لك التوفيق والاستمرار في تحقيق أهدافك.\n\nملاحظات:\n${notesStr}`
@@ -298,7 +284,7 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           <div className="min-w-0">
             <p className="text-[10px] text-slate-400 font-bold">آخر وزن</p>
             <p className="text-xs font-black text-slate-800">
-              {lastRecord ? `${lastRecord.weight} كجم` : '--'}
+              {currentRecord ? `${currentRecord.weight} كجم` : '--'}
             </p>
           </div>
         </div>
@@ -394,7 +380,7 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
             <Scale className="w-4.5 h-4.5 text-[#1E88E5]" />
             <h2 className="text-sm font-black text-slate-800">جدول متابعة الوزن</h2>
             <span className="text-[11px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full">
-              {clientRecords.length} تسجيل
+              {currentRecord ? 1 : 0} تسجيل
             </span>
           </div>
           {!showAddForm && (
@@ -463,75 +449,56 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
           <table className="w-full text-right text-xs">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-500 font-bold">
-                <th className="p-3.5 pr-5">#</th>
-                <th className="p-3.5">التاريخ</th>
+                <th className="p-3.5 pr-5">التاريخ</th>
                 <th className="p-3.5">الوزن</th>
-                <th className="p-3.5">التغير</th>
                 <th className="p-3.5">الملاحظات</th>
                 <th className="p-3.5 pl-5 text-center">الإجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {clientRecords.length === 0 ? (
+              {!currentRecord ? (
                 <tr>
-                  <td colSpan={6} className="p-10 text-center">
+                  <td colSpan={4} className="p-10 text-center">
                     <div className="flex flex-col items-center gap-2 text-slate-400">
                       <Scale className="w-8 h-8 text-slate-300" />
-                      <span className="font-bold text-sm">لا توجد قياسات وزن مسجلة</span>
+                      <span className="font-bold text-sm">لا يوجد وزن مسجل</span>
                       <span className="text-[11px]">اضغط "إضافة قياس جديد" لتسجيل أول قياس</span>
                     </div>
                   </td>
                 </tr>
               ) : (
-                clientRecords.map((record, idx) => {
-                  const nextRecord = clientRecords[idx + 1];
-                  const diff = nextRecord ? record.weight - nextRecord.weight : 0;
-                  return (
-                    <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-3.5 pr-5 text-slate-400 font-mono font-bold">{idx + 1}</td>
-                      <td className="p-3.5 font-semibold text-slate-700">{formatDate(record.date)}</td>
-                      <td className="p-3.5">
-                        <span className="font-black text-slate-800 font-mono text-sm">{record.weight}</span>
-                        <span className="text-[10px] text-slate-400 mr-1">كجم</span>
-                      </td>
-                      <td className="p-3.5">
-                        {diff !== 0 ? (
-                          <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${diff > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                            {diff > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                            {diff > 0 ? '+' : ''}{diff.toFixed(1)}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-[11px]">--</span>
-                        )}
-                      </td>
-                      <td className="p-3.5 text-slate-500 font-semibold max-w-[200px] truncate">{record.notes || '-'}</td>
-                      <td className="p-3.5 pl-5">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button onClick={() => handleEdit(record)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-all cursor-pointer">
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDelete(record.id)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                <tr className="hover:bg-slate-50/50 transition-colors">
+                  <td className="p-3.5 pr-5 font-semibold text-slate-700">{formatDate(currentRecord.date)}</td>
+                  <td className="p-3.5">
+                    <span className="font-black text-slate-800 font-mono text-sm">{currentRecord.weight}</span>
+                    <span className="text-[10px] text-slate-400 mr-1">كجم</span>
+                  </td>
+                  <td className="p-3.5 text-slate-500 font-semibold max-w-[200px] truncate">{currentRecord.notes || '-'}</td>
+                  <td className="p-3.5 pl-5">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button onClick={() => handleEdit(currentRecord)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-all cursor-pointer">
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(currentRecord.id)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
 
-        {lastRecord && (
+        {currentRecord && (
           <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50/30 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-[11px] text-slate-500 font-semibold">
               <Weight className="w-3.5 h-3.5 text-purple-400" />
-              <span>آخر وزن: <span className="font-black text-slate-800">{lastRecord.weight} كجم</span></span>
+              <span>آخر وزن: <span className="font-black text-slate-800">{currentRecord.weight} كجم</span></span>
               <span className="text-slate-300">|</span>
-              <span>{formatDate(lastRecord.date)}</span>
+              <span>{formatDate(currentRecord.date)}</span>
               {followUpDate && (
                 <>
                   <span className="text-slate-300">|</span>
