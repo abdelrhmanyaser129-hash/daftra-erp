@@ -215,21 +215,21 @@ export default function CreateInvoiceView({
 
     const { data: newInv } = await supabase.from('invoices').insert({
       id: newInvoice.id,
-      invoiceNumber: newInvoice.invoiceNumber,
+      invoice_number: newInvoice.invoiceNumber,
       date: newInvoice.date,
-      issueDate: newInvoice.issueDate,
-      clientName: newInvoice.clientName,
-      salesAgent: newInvoice.salesAgent,
-      paymentTerms: newInvoice.paymentTerms,
+      issue_date: newInvoice.issueDate,
+      client_name: newInvoice.clientName,
+      sales_agent: newInvoice.salesAgent,
+      payment_terms: newInvoice.paymentTerms,
       items: newInvoice.items,
       status: newInvoice.status,
-      discountType: newInvoice.discountType,
-      discountValue: newInvoice.discountValue,
+      discount_type: newInvoice.discountType,
+      discount_value: newInvoice.discountValue,
       adjustment: newInvoice.adjustment,
       subtotal: newInvoice.subtotal,
       total: newInvoice.total,
       notes: newInvoice.notes,
-      alreadyPaid: newInvoice.alreadyPaid,
+      already_paid: newInvoice.alreadyPaid,
       currency: newInvoice.currency
     }).select().single();
     setView('manage-invoices');

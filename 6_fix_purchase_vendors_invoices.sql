@@ -1,0 +1,15 @@
+-- Add missing columns to purchase_vendors
+ALTER TABLE purchase_vendors ADD COLUMN IF NOT EXISTS first_name TEXT DEFAULT '';
+ALTER TABLE purchase_vendors ADD COLUMN IF NOT EXISTS last_name TEXT DEFAULT '';
+
+-- Add missing columns to invoices
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS date TEXT DEFAULT '';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS issue_date TEXT DEFAULT '';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sales_agent TEXT DEFAULT '';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_terms TEXT DEFAULT '';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS discount_type TEXT DEFAULT 'percentage';
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS discount_value DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS adjustment DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS subtotal DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS already_paid BOOLEAN DEFAULT false;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS currency TEXT DEFAULT 'EGP';
