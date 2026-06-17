@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Users, Search, Plus, Mail, Phone, MapPin, Tag, Briefcase, Settings,
-  Calendar, Clock, AlertCircle, CheckCircle2, Filter
+  Calendar, Clock, AlertCircle, CheckCircle2, Filter, Trash2
 } from 'lucide-react';
 import { Client } from '../types';
 import { supabase } from '../lib/supabase';
@@ -110,6 +110,16 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
 
     return matchesSearch && matchesCategory && matchesFollowUp;
   });
+
+  const handleDeleteClient = async (id: string, name: string) => {
+    if (!confirm(`هل أنت متأكد من حذف العميل "${name}"؟\nسيتم حذف جميع بياناته بما فيها قياسات الوزن والملاحظات.`)) return;
+    setLoading(true);
+    await supabase.from('client_notes').delete().eq('client_id', id);
+    await supabase.from('weight_records').delete().eq('client_id', id);
+    await supabase.from('invoices').delete().eq('client_id', id);
+    await supabase.from('clients').delete().eq('id', id);
+    await loadClients();
+  };
 
   const handleFollowUpFilter = (filter: string) => {
     setFollowUpFilter(filter);
@@ -244,13 +254,14 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
         <table className="w-full text-right text-xs table-auto">
           <thead className="bg-slate-50/75 border-b border-daftra-border font-bold text-slate-700 select-none">
             <tr>
-              <th className="p-3 w-[100px]">كود العميل</th>
-              <th className="p-3 w-1/4">الاسم الكامل لجهة التعامل</th>
-              <th className="p-3 w-1/5">البريد الإلكتروني</th>
-              <th className="p-3 w-1/6">الهاتف / الجوال</th>
-              <th className="p-3 w-1/5">العنوان السكني</th>
-              <th className="p-3 text-center">التصنيف الحسابي</th>
+              <th className="p-3 text-center" style={{width:'80px'}}>كود العميل</th>
+              <th className="p-3">الاسم الكامل</th>
+              <th className="p-3">البريد الإلكتروني</th>
+              <th className="p-3">الهاتف / الجوال</th>
+              <th className="p-3">العنوان</th>
+              <th className="p-3 text-center">التصنيف</th>
               <th className="p-3 text-center">موعد المتابعة</th>
+              <th className="p-3 text-center" style={{width:'60px'}}>الإجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -302,11 +313,17 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
                       <span className="text-slate-300 text-[10px]">--</span>
                     )}
                   </td>
+                  <td className="p-3 text-center">
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteClient(client.id, client.fullName); }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer" title="حذف العميل">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={7} className="p-10 text-center font-bold text-slate-400 select-none">
+                <td colSpan={8} className="p-10 text-center font-bold text-slate-400 select-none">
                   لا يوجد عملاء يطابقون هذه المواصفات.
                 </td>
               </tr>
