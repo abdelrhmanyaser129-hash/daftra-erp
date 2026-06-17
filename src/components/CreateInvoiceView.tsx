@@ -305,8 +305,7 @@ export default function CreateInvoiceView({
 
     const customer = finalSelectedClient;
 
-    const newInvoice: Invoice = {
-      id: `inv-${Date.now()}`,
+    const newInvoice: any = {
       invoiceNumber,
       date: invoiceDate,
       issueDate,
@@ -326,7 +325,6 @@ export default function CreateInvoiceView({
     };
 
     const { data: newInv, error: invError } = await supabase.from('invoices').insert({
-      id: newInvoice.id,
       invoice_number: newInvoice.invoiceNumber,
       date: newInvoice.date,
       issue_date: newInvoice.issueDate,
