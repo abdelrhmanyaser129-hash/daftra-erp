@@ -49,7 +49,20 @@ export default function CreateInvoiceView({
         setClients(data.map(mapClientRow));
       }
     });
-    supabase.from('invoices').select('*').then(({ data }) => { if (data) setInvoices(data); });
+    supabase.from('invoices').select('*').then(({ data }) => {
+      if (data) {
+        setInvoices(data);
+        if (!editInvoiceId && data.length > 0) {
+          const maxNum = data.reduce((mx: number, inv: any) => {
+            const num = parseInt(inv.invoice_number, 10);
+            return isNaN(num) ? mx : Math.max(mx, num);
+          }, 0);
+          setInvoiceNumber(String(maxNum + 1).padStart(6, '0'));
+        } else if (!editInvoiceId) {
+          setInvoiceNumber('000001');
+        }
+      }
+    });
     supabase.from('products').select('id, name, code, selling_price, tax1').then(({ data }) => { if (data) setProducts(data); });
     supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
     supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
@@ -110,17 +123,8 @@ export default function CreateInvoiceView({
     balance: row.balance || 0,
   });
 
-  const getNextInvoiceNumber = () => {
-    if (invoices.length === 0) return '000001';
-    const lastNum = invoices.reduce((max, inv) => {
-      const num = parseInt(inv.invoiceNumber, 10);
-      return isNaN(num) ? max : Math.max(max, num);
-    }, 0);
-    return String(lastNum + 1).padStart(6, '0');
-  };
-
   const [selectedClientId, setSelectedClientId] = useState<string>('');
-  const [invoiceNumber, setInvoiceNumber] = useState<string>(getNextInvoiceNumber());
+  const [invoiceNumber, setInvoiceNumber] = useState<string>('');
   const [invoiceDate, setInvoiceDate] = useState<string>('2026-06-05');
   const [issueDate, setIssueDate] = useState<string>('2026-06-05');
   const [salesAgent, setSalesAgent] = useState<string>('Abdo Yaser #000001');
@@ -634,8 +638,8 @@ export default function CreateInvoiceView({
               <input
                 type="text"
                 value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-daftra-border rounded font-mono text-center font-bold text-[#0d385a]"
+                readOnly
+                className="w-full px-3 py-1.5 bg-slate-100 border border-daftra-border rounded font-mono text-center font-bold text-[#0d385a] cursor-not-allowed"
               />
             </div>
 
