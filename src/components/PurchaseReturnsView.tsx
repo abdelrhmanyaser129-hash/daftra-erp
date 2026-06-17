@@ -327,13 +327,12 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
 
   // Edit Item Cell values
   const handleEditItemCell = (id: string, field: keyof PurchaseReturnItem, value: any) => {
-    const updated = items.map(item => {
+    setItems(prev => prev.map(item => {
       if (item.id === id) {
         return { ...item, [field]: value };
       }
       return item;
-    });
-    setItems(updated);
+    }));
   };
 
   const getFilteredProducts = (query: string) => {

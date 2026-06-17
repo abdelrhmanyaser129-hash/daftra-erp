@@ -334,13 +334,22 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
   // Edit Item Cell values
   const handleEditItemCell = (id: string, field: keyof PurchaseInvoiceItem, value: any) => {
-    const updated = items.map(item => {
+    setItems(prev => prev.map(item => {
       if (item.id === id) {
         return { ...item, [field]: value };
       }
       return item;
-    });
-    setItems(updated);
+    }));
+  };
+
+  // Batch update multiple fields on an item in one pass (avoids stale closure)
+  const handleSelectProduct = (id: string, fields: Partial<PurchaseInvoiceItem>) => {
+    setItems(prev => prev.map(item => {
+      if (item.id === id) {
+        return { ...item, ...fields };
+      }
+      return item;
+    }));
   };
 
   // Quick Vendor Addition inside form
@@ -1273,9 +1282,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                                   <div
                                     key={product.id}
                                     onMouseDown={() => {
-                                      handleEditItemCell(item.id, 'itemName', product.name);
-                                      handleEditItemCell(item.id, 'unitPrice', product.selling_price);
-                                      handleEditItemCell(item.id, 'product_id', product.id);
+                                      handleSelectProduct(item.id, { itemName: product.name, unitPrice: product.selling_price, product_id: product.id });
                                       setShowProductDropdown(prev => ({ ...prev, [item.id]: false }));
                                       setProductSearchText(prev => ({ ...prev, [item.id]: '' }));
                                     }}
