@@ -129,7 +129,7 @@ export default function CreateInvoiceView({
   const [paymentMethod, setPaymentMethod] = useState<string>('نقدا');
   const [selectedTreasuryId, setSelectedTreasuryId] = useState<string>('');
 
-  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productSearchText, setProductSearchText] = useState<Record<string, string>>({});
   const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
@@ -199,6 +199,15 @@ export default function CreateInvoiceView({
     );
   };
 
+  const handleBatchUpdateRow = (id: string, fields: Record<string, any>) => {
+    setItems(prev =>
+      prev.map(row => {
+        if (row.id !== id) return row;
+        return { ...row, ...fields };
+      })
+    );
+  };
+
   const handleSelectProduct = (rowId: string, product: any) => {
     setItems(prev =>
       prev.map(row => {
@@ -213,7 +222,7 @@ export default function CreateInvoiceView({
       })
     );
     setShowProductDropdown(prev => ({ ...prev, [rowId]: false }));
-    setProductSearchQuery('');
+    setProductSearchText(prev => ({ ...prev, [rowId]: '' }));
   };
 
   const getFilteredProducts = (query: string) => {
@@ -696,156 +705,200 @@ export default function CreateInvoiceView({
           <table className="w-full text-right text-xs table-fixed min-w-[900px]">
             <thead className="bg-slate-50/75 text-slate-600 border-b border-daftra-border font-bold">
               <tr>
-                <th className="p-3 w-[250px]">بند المنتج / الخدمة</th>
-                <th className="p-3 w-[2700px] min-w-[200px]">الوصف التوضيحي</th>
-                <th className="p-3 w-[120px]">سعر الوحدة</th>
-                <th className="p-3 w-[80px] text-center">الكمية</th>
-                <th className="p-3 w-[100px]">خصم البند</th>
-                <th className="p-3 w-[140px]">الضريبة 1</th>
-                <th className="p-3 w-[110px] text-left leading-none">المجموع النظري</th>
-                <th className="p-3 w-[50px] text-center"></th>
+                <th className="p-3 text-right">البند / المنتج</th>
+                <th className="p-3">الوصف</th>
+                <th className="p-3">سعر الوحدة</th>
+                <th className="p-3">الكمية</th>
+                <th className="p-3">الخصم (ج.م)</th>
+                <th className="p-3">الضريبة</th>
+                <th className="p-3 text-left">المجموع</th>
+                <th className="p-3 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {items.map((row, index) => (
+              {items.map((row, idx) => (
                 <tr key={row.id} className="hover:bg-slate-50/30 transition-colors">
-                  <td className="p-3.5">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={row.productId ? row.itemName : productSearchQuery}
-                        onChange={(e) => {
-                          setProductSearchQuery(e.target.value);
-                          setShowProductDropdown(prev => ({ ...prev, [row.id]: true }));
-                          if (!e.target.value) {
-                            handleUpdateRow(row.id, 'productId', '');
-                            handleUpdateRow(row.id, 'itemName', '');
-                          }
-                        }}
-                        onFocus={() => setShowProductDropdown(prev => ({ ...prev, [row.id]: true }))}
-                        onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [row.id]: false })), 200)}
-                        placeholder="ابحث عن منتج..."
-                        className="w-full px-2.5 py-1.5 bg-yellow-50/15 border border-yellow-200 rounded font-bold text-slate-800 focus:outline-none focus:border-daftra-blue"
-                      />
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2.5 pointer-events-none" />
-                      {showProductDropdown[row.id] && (
-                        <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
-                          {getFilteredProducts(productSearchQuery).map((p: any) => (
+                  {/* Item Name with Product Autocomplete */}
+                  <td className="p-2 text-right relative" style={{ minWidth: 200 }}>
+                    <input
+                      type="text"
+                      placeholder="اسم البند أو كود المنتج"
+                      value={row.productId ? row.itemName : (productSearchText[row.id] || '')}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        handleUpdateRow(row.id, 'itemName', val);
+                        handleUpdateRow(row.id, 'productId', '');
+                        setProductSearchText(prev => ({ ...prev, [row.id]: val }));
+                        setShowProductDropdown(prev => ({ ...prev, [row.id]: true }));
+                      }}
+                      onFocus={() => setShowProductDropdown(prev => ({ ...prev, [row.id]: true }))}
+                      onBlur={() => setTimeout(() => setShowProductDropdown(prev => ({ ...prev, [row.id]: false })), 200)}
+                      className="w-full text-right p-2 border border-slate-200 rounded font-bold outline-none focus:border-[#0074b1]"
+                    />
+                    {showProductDropdown[row.id] && (
+                      <div className="absolute z-50 top-full right-0 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1">
+                        {(productSearchText[row.id]?.trim()
+                          ? getFilteredProducts(productSearchText[row.id])
+                          : products
+                        ).length === 0 ? (
+                          <div className="p-2 text-slate-400 text-xs text-center">لا توجد نتائج</div>
+                        ) : (
+                          (productSearchText[row.id]?.trim()
+                            ? getFilteredProducts(productSearchText[row.id])
+                            : products
+                          ).map((p: any) => (
                             <div
                               key={p.id}
-                              onMouseDown={() => handleSelectProduct(row.id, p)}
-                              className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                              onMouseDown={() => {
+                                handleBatchUpdateRow(row.id, {
+                                  productId: p.id,
+                                  itemName: p.name,
+                                  unitPrice: parseFloat(p.selling_price) || 0,
+                                  taxValue: parseInt(p.tax1) || 14
+                                });
+                                setShowProductDropdown(prev => ({ ...prev, [row.id]: false }));
+                                setProductSearchText(prev => ({ ...prev, [row.id]: '' }));
+                              }}
+                              className="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
                             >
                               <div>
-                                <span className="font-bold text-slate-700">{p.name}</span>
-                                <span className="text-[10px] text-slate-400 mr-1">{p.code}</span>
+                                <div className="font-bold text-xs">{p.name}</div>
+                                {p.code && <div className="text-[10px] text-slate-400">كود: {p.code}</div>}
                               </div>
-                              <span className="text-daftra-blue font-mono font-bold">{parseFloat(p.selling_price || 0).toLocaleString('ar-EG')} ج.م</span>
+                              <div className="text-xs font-mono font-bold text-[#0074b1]">{parseFloat(p.selling_price || 0).toLocaleString('ar-EG')} ج.م</div>
                             </div>
-                          ))}
-                          {getFilteredProducts(productSearchQuery).length === 0 && (
-                            <div className="px-3 py-2 text-xs text-slate-400 text-center">لا توجد نتائج</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </td>
 
-                  <td className="p-3">
-                    <textarea
-                      rows={2}
+                  {/* Description */}
+                  <td className="p-2">
+                    <input
+                      type="text"
+                      placeholder="وصف إضافي"
                       value={row.description}
                       onChange={(e) => handleUpdateRow(row.id, 'description', e.target.value)}
-                      placeholder="وصف إضافي يسجل في تفاصيل مطبوعة الفاتورة..."
-                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded resize-none text-[11px] leading-snug focus:outline-none"
+                      className="w-full text-right p-2 border border-slate-200 rounded outline-none text-slate-500 focus:border-[#0074b1]"
                     />
                   </td>
 
-                  <td className="p-3">
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={row.unitPrice}
-                        onChange={(e) => handleUpdateRow(row.id, 'unitPrice', parseFloat(e.target.value) || 0)}
-                        className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-center font-mono font-bold font-semibold text-[#0d385a]"
-                      />
-                    </div>
-                  </td>
-
-                  <td className="p-3 text-center">
+                  {/* Unit Price */}
+                  <td className="p-2">
                     <input
                       type="number"
+                      placeholder="0"
+                      value={row.unitPrice || ''}
+                      onChange={(e) => handleUpdateRow(row.id, 'unitPrice', Number(e.target.value))}
+                      className="w-full text-center p-2 border border-slate-200 rounded font-bold font-mono outline-none focus:border-[#0074b1]"
+                    />
+                  </td>
+
+                  {/* Quantity */}
+                  <td className="p-2 w-24">
+                    <input
+                      type="number"
+                      placeholder="1"
                       min="1"
-                      value={row.quantity}
-                      onChange={(e) => handleUpdateRow(row.id, 'quantity', parseInt(e.target.value, 10) || 1)}
-                      className="w-full max-w-[60px] px-1 py-1.5 bg-slate-50 border border-slate-200 rounded text-center font-mono font-bold"
+                      value={row.quantity || ''}
+                      onChange={(e) => handleUpdateRow(row.id, 'quantity', Number(e.target.value))}
+                      className="w-full text-center p-2 border border-slate-200 rounded font-bold font-mono outline-none focus:border-[#0074b1]"
                     />
                   </td>
 
-                  <td className="p-3">
+                  {/* Line Discount */}
+                  <td className="p-2 w-28">
                     <input
                       type="number"
+                      placeholder="0"
                       min="0"
-                      value={row.discount}
-                      onChange={(e) => handleUpdateRow(row.id, 'discount', parseFloat(e.target.value) || 0)}
-                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-center font-mono text-rose-600 font-semibold"
+                      value={row.discount || ''}
+                      onChange={(e) => handleUpdateRow(row.id, 'discount', Number(e.target.value))}
+                      className="w-full text-center p-2 border border-slate-200 rounded font-bold font-mono outline-none focus:border-[#0074b1]"
                     />
                   </td>
 
-                  <td className="p-3">
+                  {/* Tax VAT selector */}
+                  <td className="p-2 w-32">
                     <select
                       value={row.taxValue}
-                      onChange={(e) => handleUpdateRow(row.id, 'taxValue', parseInt(e.target.value, 10))}
-                      className="w-full px-1.5 py-1.5 bg-slate-50 border border-slate-200 rounded text-center select-none"
+                      onChange={(e) => handleUpdateRow(row.id, 'taxValue', Number(e.target.value))}
+                      className="w-full text-center p-2 border border-slate-200 rounded font-bold outline-none"
                     >
-                      <option value={0}>بدون ضريبة 0%</option>
-                      <option value={14}>ضريبة 14% (فات)</option>
-                      <option value={5}>ضريبة استهلاك 5%</option>
-                      <option value={10}>ضريبة مبيعات مخصصة 10%</option>
+                      <option value={0}>بدون ضريبة (0%)</option>
+                      <option value={14}>ضريبة مصرية (14%)</option>
+                      <option value={5}>ضريبة مبيعات (5%)</option>
                     </select>
                   </td>
 
-                  <td className="p-3 text-left font-mono font-bold text-slate-800">
-                    <span className="text-xs">{row.total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span>
-                    <span className="text-[10px] text-slate-400 mr-1.5">ج.م</span>
+                  {/* Total per row */}
+                  <td className="p-2 text-left font-mono font-black text-slate-800">
+                    {(() => {
+                      const raw = row.unitPrice * row.quantity;
+                      const rowDisc = row.discount || 0;
+                      const rowT = raw * (row.taxValue / 100);
+                      const lineTotal = raw - rowDisc + rowT;
+                      return lineTotal.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                    })()} ج.م
                   </td>
 
-                  <td className="p-3 text-center">
+                  {/* Delete Row Action */}
+                  <td className="p-2 text-center">
                     <button
                       type="button"
                       onClick={() => handleDeleteRow(row.id)}
-                      className="text-rose-500 hover:text-rose-700 p-1.5 rounded-full hover:bg-rose-50 cursor-pointer active:scale-95 transition-all"
-                      title="حذف هذا البند"
+                      disabled={items.length === 1}
+                      className={`p-1.5 rounded transition-all cursor-pointer ${items.length === 1 ? 'text-slate-200 cursor-not-allowed' : 'text-rose-500 hover:bg-rose-50'}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </td>
+
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <div className="bg-slate-50/50 border-t border-daftra-border px-4 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div className="flex gap-2">
-            <button
-              onClick={handleAddRow}
-              type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 border border-daftra-border rounded text-xs font-bold text-slate-700 shadow-sm cursor-pointer"
-            >
-              <Plus className="w-4 h-4 text-daftra-blue" />
-              <span>إضافة سطر بند</span>
-            </button>
-          </div>
+        <div className="bg-slate-50/50 p-4 border-t border-slate-200 flex flex-col md:flex-row justify-between items-start gap-4">
+          <button
+            type="button"
+            onClick={handleAddRow}
+            className="px-4 py-2 bg-white text-[#0074b1] border border-blue-200 hover:bg-blue-50/60 rounded-md font-extrabold text-xs transition-all cursor-pointer flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            <span>إضافة بند</span>
+          </button>
 
-          <div className="flex flex-col items-end gap-1.5 text-xs text-slate-600 min-w-[200px] ml-4">
-            <div className="flex justify-between w-full font-bold">
-              <span>الإجمالي الفرعي (قبل الخصم والضريبة):</span>
-              <span className="font-mono text-slate-800">{subtotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+          <div className="w-full md:w-96 text-xs font-semibold text-slate-700 space-y-2 border border-slate-200 bg-white p-4 rounded-xl">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-500 font-bold">الإجمالي قبل الخصم:</span>
+              <span className="font-mono text-slate-800 font-extrabold">{subtotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
             </div>
-            <div className="flex justify-between w-full font-bold text-slate-800 text-sm border-t border-slate-200 pt-1">
-              <span>المجموع النهائي المقدر:</span>
-              <span className="font-mono text-daftra-blue font-extrabold">{grandTotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+
+            {globalDiscountValue > 0 && (
+              <div className="flex justify-between items-center text-rose-500 font-bold">
+                <span>خصم الفاتورة الكلي:</span>
+                <span className="font-mono">
+                  -{globalDiscountType === 'percentage'
+                    ? `${(subtotal * (globalDiscountValue / 100)).toLocaleString('ar-EG')} ج.م (${globalDiscountValue}%)`
+                    : `${globalDiscountValue.toLocaleString('ar-EG')} ج.م`
+                  }
+                </span>
+              </div>
+            )}
+
+            {Number(adjustmentValue) !== 0 && (
+              <div className="flex justify-between items-center text-blue-600 font-bold">
+                <span>التسويات:</span>
+                <span className="font-mono">{Number(adjustmentValue).toLocaleString('ar-EG')} ج.م</span>
+              </div>
+            )}
+
+            <div className="border-t border-slate-200 pt-2 flex justify-between items-center text-slate-900 text-sm font-black">
+              <span>الإجمالي المستحق:</span>
+              <span className="font-mono text-[#0074b1] text-base">{grandTotal.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ج.م</span>
             </div>
           </div>
         </div>
