@@ -179,7 +179,7 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
     if (treasuryError || !treasuryData) {
       console.error('Error fetching treasury balance:', treasuryError);
-      alert('حدث خطأ أثناء جلب رصيد الخزينة.');
+      alert('حدث خطأ أثناء جلب رصيد الخزينة: ' + (treasuryError?.message || 'غير معروف'));
       return;
     }
 
@@ -203,7 +203,7 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
     if (error) {
       console.error('Error saving expense:', error);
-      alert('حدث خطأ أثناء حفظ المصروف.');
+      alert('حدث خطأ أثناء حفظ المصروف: ' + error.message);
       return;
     }
 
@@ -215,7 +215,7 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
     if (updateError) {
       console.error('Error updating treasury balance:', updateError);
-      alert('حدث خطأ أثناء تحديث رصيد الخزينة.');
+      alert('حدث خطأ أثناء تحديث رصيد الخزينة: ' + updateError.message);
       return;
     }
 
@@ -236,11 +236,11 @@ export default function FinanceExpensesView({ setView }: FinanceExpensesViewProp
 
     if (transError) {
       console.error('Error inserting treasury transaction:', transError);
+      alert('تم حفظ المصروف ولكن حدث خطأ أثناء تسجيل حركة الخزينة: ' + transError.message);
+      return;
     }
 
-    if (data) {
-      setExpenses([mapExpense(data), ...expenses]);
-    }
+    setExpenses(prev => [mapExpense(data), ...prev]);
     setCurrentMode('list');
   };
 

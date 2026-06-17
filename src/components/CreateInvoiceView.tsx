@@ -42,12 +42,42 @@ export default function CreateInvoiceView({
   const [safesBanks, setSafesBanks] = useState<any[]>([]);
 
   useEffect(() => {
-    supabase.from('clients').select('*').then(({ data }) => { if (data) setClients(data); });
+    supabase.from('clients').select('*').then(({ data }) => {
+      if (data) {
+        setClients(data.map(mapClientRow));
+      }
+    });
     supabase.from('invoices').select('*').then(({ data }) => { if (data) setInvoices(data); });
     supabase.from('products').select('id, name, code, selling_price, tax1').then(({ data }) => { if (data) setProducts(data); });
     supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
     supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
   }, []);
+
+  const mapClientRow = (row: any): any => ({
+    id: row.id,
+    name: row.name || '',
+    fullName: row.full_name || row.name || '',
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    email: row.email || '',
+    phone: row.phone || '',
+    mobile: row.mobile || '',
+    address1: row.address1 || row.address || '',
+    address2: row.address2 || '',
+    city: row.city || '',
+    region: row.region || '',
+    zipCode: row.zip_code || '',
+    country: row.country || '',
+    commercialRegistry: row.commercial_registry || '',
+    taxCard: row.tax_card || '',
+    nationalId: row.national_id || '',
+    codeNumber: row.code_number || '',
+    currency: row.currency || 'EGP',
+    notes: row.notes || '',
+    category: row.category || '',
+    billingMethod: row.billing_method || '',
+    balance: row.balance || 0,
+  });
 
   const getNextInvoiceNumber = () => {
     if (invoices.length === 0) return '000001';
@@ -101,6 +131,8 @@ export default function CreateInvoiceView({
 
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
+  const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
 
   useEffect(() => {
     let computedSubtotal = 0;
@@ -262,12 +294,14 @@ export default function CreateInvoiceView({
       return;
     }
 
+    const customer = finalSelectedClient;
+
     const newInvoice: Invoice = {
       id: `inv-${Date.now()}`,
       invoiceNumber,
       date: invoiceDate,
       issueDate,
-      clientName: finalSelectedClient.fullName,
+      clientName: customer.fullName,
       salesAgent,
       paymentTerms,
       items,
@@ -282,12 +316,13 @@ export default function CreateInvoiceView({
       currency: 'EGP'
     };
 
-    const { data: newInv } = await supabase.from('invoices').insert({
+    const { data: newInv, error: invError } = await supabase.from('invoices').insert({
       id: newInvoice.id,
       invoice_number: newInvoice.invoiceNumber,
       date: newInvoice.date,
       issue_date: newInvoice.issueDate,
-      client_name: newInvoice.clientName,
+      client_id: customer.id,
+      client_name: customer.fullName,
       sales_agent: newInvoice.salesAgent,
       payment_terms: newInvoice.paymentTerms,
       items: newInvoice.items,
@@ -304,6 +339,11 @@ export default function CreateInvoiceView({
       treasury_id: selectedTreasuryId || null,
       payment_method: calculatedStatusValue === 'paid' ? paymentMethod : ''
     }).select().single();
+
+    if (invError) {
+      alert('فشل حفظ الفاتورة: ' + invError.message);
+      return;
+    }
 
     if (calculatedStatusValue === 'paid' && newInv) {
       for (const item of items) {
@@ -330,23 +370,49 @@ export default function CreateInvoiceView({
       const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
       const newBalance = currentBalance + grandTotal;
 
-      await supabase
+      const { error: treasuryUpdateErr } = await supabase
         .from('safes_banks')
         .update({ balance: newBalance })
         .eq('id', selectedTreasuryId);
 
-      await supabase.from('treasury_transactions').insert({
+      if (treasuryUpdateErr) {
+        console.error('Error updating treasury balance:', treasuryUpdateErr);
+      }
+
+      const { error: treasuryTxErr } = await supabase.from('treasury_transactions').insert({
         treasury_id: selectedTreasuryId,
         transaction_type: 'sale_payment',
         reference_type: 'invoice',
         reference_id: newInv.id,
         reference_number: newInv.invoice_number,
-        description: `تحصيل قيمة الفاتورة ${newInv.invoice_number} من ${finalSelectedClient.fullName}`,
+        description: `تحصيل قيمة الفاتورة ${newInv.invoice_number} من ${customer.fullName}`,
         amount: grandTotal,
         balance_before: currentBalance,
         balance_after: newBalance,
         created_by: salesAgent
       });
+
+      if (treasuryTxErr) {
+        console.error('Error inserting treasury transaction:', treasuryTxErr);
+      }
+
+      const { error: balanceErr } = await supabase
+        .from('clients')
+        .update({ balance: (Number(customer.balance) || 0) + grandTotal })
+        .eq('id', customer.id);
+
+      if (balanceErr) {
+        console.error('Error updating client balance:', balanceErr);
+      }
+    } else if (calculatedStatusValue !== 'draft' && newInv) {
+      const { error: balanceErr } = await supabase
+        .from('clients')
+        .update({ balance: (Number(customer.balance) || 0) + grandTotal })
+        .eq('id', customer.id);
+
+      if (balanceErr) {
+        console.error('Error updating client balance:', balanceErr);
+      }
     }
 
     setView('manage-invoices');
@@ -456,7 +522,7 @@ export default function CreateInvoiceView({
               </select>
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 relative">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-700">
                   العميل <span className="text-rose-500 font-bold">*</span>
@@ -470,29 +536,85 @@ export default function CreateInvoiceView({
                   <span>جديد</span>
                 </button>
               </div>
-              <div className="flex gap-2">
-                <select
-                  value={selectedClientId}
-                  onChange={(e) => setSelectedClientId(e.target.value)}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="ابحث باسم العميل أو رقم الموبايل..."
+                  value={clientSearchQuery}
+                  onChange={(e) => {
+                    setClientSearchQuery(e.target.value);
+                    setShowClientDropdown(true);
+                    if (!e.target.value) setSelectedClientId('');
+                  }}
+                  onFocus={() => setShowClientDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowClientDropdown(false), 200)}
                   className="w-full px-3 py-2 bg-amber-50/20 border border-daftra-blue rounded text-xs font-bold text-daftra-dark-blue focus:ring-2 focus:ring-daftra-blue focus:outline-none"
-                >
-                  <option value="">(اختر العميل المعني)</option>
-                  {clients.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.fullName} [{c.codeNumber}]
-                    </option>
-                  ))}
-                </select>
+                />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-2.5 pointer-events-none" />
+                {showClientDropdown && (
+                  <div className="absolute z-50 top-full right-0 left-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-48 overflow-y-auto">
+                    {(clientSearchQuery.trim()
+                      ? clients.filter(c => {
+                          const q = clientSearchQuery.toLowerCase();
+                          return c.fullName.toLowerCase().includes(q) || c.mobile.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q);
+                        })
+                      : clients
+                    ).length === 0 ? (
+                      <div className="p-2 text-xs text-slate-400 text-center">لا توجد نتائج</div>
+                    ) : (
+                      (clientSearchQuery.trim()
+                        ? clients.filter(c => {
+                            const q = clientSearchQuery.toLowerCase();
+                            return c.fullName.toLowerCase().includes(q) || c.mobile.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q);
+                          })
+                        : clients
+                      ).map(c => (
+                        <div
+                          key={c.id}
+                          onMouseDown={() => {
+                            setSelectedClientId(c.id);
+                            setClientSearchQuery(c.fullName);
+                            setShowClientDropdown(false);
+                          }}
+                          className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
+                        >
+                          <div>
+                            <span className="font-bold text-slate-700">{c.fullName}</span>
+                            <span className="text-[10px] text-slate-400 mr-1">[{c.codeNumber}]</span>
+                          </div>
+                          <span className="text-slate-400 text-[10px]">{c.mobile || c.phone}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {selectedClientId && (
-            <div className="bg-sky-50 text-[11px] text-[#006296] p-2.5 rounded border border-sky-100 flex items-center justify-between font-bold">
-              <span>العملة المعتمدة لهذا العميل:</span>
-              <span className="font-mono text-xs text-daftra-blue">{getSelectedClientDetails()?.currency}</span>
-            </div>
-          )}
+          {selectedClientId && (() => {
+            const client = getSelectedClientDetails();
+            if (!client) return null;
+            return (
+              <div className="bg-gradient-to-br from-sky-50 to-white border border-sky-200 rounded-lg p-3 space-y-2 text-xs animate-fadeIn">
+                <div className="flex items-center justify-between border-b border-sky-100 pb-2">
+                  <span className="font-extrabold text-slate-800">{client.fullName}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">#{client.codeNumber}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-slate-600">
+                  {client.mobile && <div><span className="text-slate-400 ml-1">موبايل:</span><span dir="ltr" className="font-semibold">{client.mobile}</span></div>}
+                  {client.phone && <div><span className="text-slate-400 ml-1">هاتف:</span><span dir="ltr" className="font-semibold">{client.phone}</span></div>}
+                  {client.email && <div className="col-span-2"><span className="text-slate-400 ml-1">بريد:</span><span className="font-semibold">{client.email}</span></div>}
+                  {client.address1 && <div className="col-span-2"><span className="text-slate-400 ml-1">العنوان:</span><span className="font-semibold">{client.address1}{client.city ? `، ${client.city}` : ''}</span></div>}
+                  {client.notes && <div className="col-span-2"><span className="text-slate-400 ml-1">ملاحظات:</span><span className="font-semibold">{client.notes}</span></div>}
+                </div>
+                <div className="flex items-center justify-between pt-1.5 border-t border-sky-100 text-[11px]">
+                  <span className="text-slate-500 font-bold">الرصيد الحالي: <span className={`font-mono font-extrabold ${Number(client.balance) > 0 ? 'text-emerald-600' : Number(client.balance) < 0 ? 'text-rose-600' : 'text-slate-600'}`}>{Number(client.balance).toLocaleString('ar-EG')} {client.currency}</span></span>
+                  <span className="text-slate-500 font-bold">العملة: <span className="font-mono text-daftra-blue">{client.currency}</span></span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Left Section in RTL (Invoice Codes & Dates details) */}

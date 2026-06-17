@@ -133,17 +133,27 @@ export default function CompositeProductsView({ setView }: CompositeProductsView
 
     const compositePayload = { name: formName, selling_price: parseFloat(formPrice) || 0, status: formStatus };
 
-    if (editingId) {
-      await supabase.from('composite_products').update(compositePayload).eq('id', editingId);
-      await supabase.from('composite_product_items').delete().eq('composite_id', editingId);
-      const itemsPayload = formItems.map(i => ({ composite_id: editingId, product_id: i.product_id, quantity: i.quantity }));
-      await supabase.from('composite_product_items').insert(itemsPayload);
-    } else {
-      const { data } = await supabase.from('composite_products').insert(compositePayload).select().single();
-      if (data) {
-        const itemsPayload = formItems.map(i => ({ composite_id: data.id, product_id: i.product_id, quantity: i.quantity }));
-        await supabase.from('composite_product_items').insert(itemsPayload);
+    try {
+      if (editingId) {
+        const { error: updateErr } = await supabase.from('composite_products').update(compositePayload).eq('id', editingId);
+        if (updateErr) { alert('فشل تحديث المنتج المركب: ' + updateErr.message); return; }
+        const { error: delErr } = await supabase.from('composite_product_items').delete().eq('composite_id', editingId);
+        if (delErr) { alert('فشل حذف المكونات القديمة: ' + delErr.message); return; }
+        const itemsPayload = formItems.map(i => ({ composite_id: editingId, product_id: i.product_id, quantity: i.quantity }));
+        const { error: insErr } = await supabase.from('composite_product_items').insert(itemsPayload);
+        if (insErr) { alert('فشل إضافة المكونات: ' + insErr.message); return; }
+      } else {
+        const { data, error: createErr } = await supabase.from('composite_products').insert(compositePayload).select().single();
+        if (createErr) { alert('فشل إنشاء المنتج المركب: ' + createErr.message); return; }
+        if (data) {
+          const itemsPayload = formItems.map(i => ({ composite_id: data.id, product_id: i.product_id, quantity: i.quantity }));
+          const { error: insErr } = await supabase.from('composite_product_items').insert(itemsPayload);
+          if (insErr) { alert('فشل إضافة المكونات: ' + insErr.message); return; }
+        }
       }
+    } catch (err: any) {
+      alert('حدث خطأ غير متوقع: ' + (err?.message || 'غير معروف'));
+      return;
     }
     setIsAdding(false);
     setEditingId(null);
