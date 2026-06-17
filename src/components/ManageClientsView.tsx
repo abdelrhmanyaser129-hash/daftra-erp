@@ -269,13 +269,17 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
               filteredClients.map((client) => (
                 <tr key={client.id} onClick={() => onSelectClient?.(client.id)} className="hover:bg-slate-50/50 transition-colors cursor-pointer">
                   <td className="p-3.5 font-mono font-bold text-slate-500">#{client.codeNumber}</td>
-                  <td className="p-3 font-semibold text-slate-800 flex items-center gap-1.5">
-                    <span className={`w-2.5 h-2.5 rounded-full ${client.type === 'individual' ? 'bg-sky-400' : 'bg-indigo-600'}`} />
-                    <span>{client.fullName}</span>
+                  <td className="p-3 font-semibold text-slate-800">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${client.type === 'individual' ? 'bg-sky-400' : 'bg-indigo-600'}`} />
+                      <span>{client.fullName}</span>
+                    </span>
                   </td>
-                  <td className="p-3 text-slate-500 font-mono flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-slate-300" />
-                    <span>{client.email || '-'}</span>
+                  <td className="p-3 text-slate-500 font-mono">
+                    <span className="flex items-center gap-1">
+                      <Mail className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                      <span>{client.email || '-'}</span>
+                    </span>
                   </td>
                   <td className="p-3 font-mono font-semibold text-slate-600">
                     <span className="flex items-center gap-1">
