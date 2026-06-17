@@ -71,6 +71,8 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
     startDate: row.start_date || '',
     targetWeight: row.target_weight || 0,
     nextFollowUp: row.next_follow_up || '',
+    lastWeight: row.last_weight || 0,
+    followUpCount: row.follow_up_count || 0,
   });
 
   const today = todayStr();
@@ -261,6 +263,7 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
               <th className="p-3">العنوان</th>
               <th className="p-3 text-center">التصنيف</th>
               <th className="p-3 text-center">موعد المتابعة</th>
+              <th className="p-3 text-center">آخر وزن</th>
               <th className="p-3 text-center" style={{width:'60px'}}>الإجراءات</th>
             </tr>
           </thead>
@@ -317,6 +320,9 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
                       <span className="text-slate-300 text-[10px]">--</span>
                     )}
                   </td>
+                  <td className="p-3 text-center font-mono font-bold text-slate-700">
+                    {client.lastWeight ? `${client.lastWeight} كجم` : '-'}
+                  </td>
                   <td className="p-3 text-center">
                     <button onClick={(e) => { e.stopPropagation(); handleDeleteClient(client.id, client.fullName); }}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer" title="حذف العميل">
@@ -327,7 +333,7 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="p-10 text-center font-bold text-slate-400 select-none">
+                <td colSpan={9} className="p-10 text-center font-bold text-slate-400 select-none">
                   لا يوجد عملاء يطابقون هذه المواصفات.
                 </td>
               </tr>

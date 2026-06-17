@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   CheckCircle2,
@@ -47,8 +47,15 @@ function AppContent() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'success' | 'info' | 'error'>('success');
 
+  const initialLoginDone = useRef(false);
+
   useEffect(() => {
-    setView('dashboard');
+    if (currentUser && !initialLoginDone.current) {
+      initialLoginDone.current = true;
+      setView('dashboard');
+    } else if (!currentUser) {
+      initialLoginDone.current = false;
+    }
   }, [currentUser]);
 
   const isViewAllowed = (role: string, view: string): boolean => {

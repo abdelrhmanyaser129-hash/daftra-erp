@@ -66,6 +66,8 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
         startDate: data.start_date || '',
         targetWeight: data.target_weight || 0,
         nextFollowUp: data.next_follow_up || '',
+        lastWeight: data.last_weight || 0,
+        followUpCount: data.follow_up_count || 0,
       });
       setFollowUpDate(data.next_follow_up || '');
       setTargetWeightVal(data.target_weight ? String(data.target_weight) : '');
@@ -148,6 +150,10 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
         notes: data.notes || '',
       }, ...prev]);
     }
+    await supabase.from('clients').update({
+      last_weight: parseFloat(formWeight),
+      follow_up_count: weightRecords.length + 1
+    }).eq('id', clientId);
     setShowAddForm(false);
     resetForm();
   };
@@ -178,7 +184,13 @@ export default function ClientDetailView({ clientId, onBack }: ClientDetailViewP
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from('weight_records').delete().eq('id', id);
     if (error) { alert('خطأ في الحذف: ' + error.message); return; }
-    setWeightRecords(prev => prev.filter(r => r.id !== id));
+    const updated = weightRecords.filter(r => r.id !== id);
+    setWeightRecords(updated);
+    const latest = updated.length > 0 ? updated[0].weight : 0;
+    await supabase.from('clients').update({
+      last_weight: latest,
+      follow_up_count: updated.length
+    }).eq('id', clientId);
   };
 
   const resetForm = () => {
