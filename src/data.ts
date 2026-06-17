@@ -147,7 +147,11 @@ export const INITIAL_INVOICES: Invoice[] = [
     total: 5130.00,
     notes: 'شكراً لتعاملكم معنا. الدفع عبر حسابنا البنكي الرسمي.',
     alreadyPaid: true,
-    currency: 'EGP'
+    currency: 'EGP',
+    depositAmount: 0,
+    remainingAmount: 0,
+    shippingCompany: '',
+    trackingNumber: ''
   },
   {
     id: 'inv2',
@@ -187,7 +191,11 @@ export const INITIAL_INVOICES: Invoice[] = [
     total: 18816.00,
     notes: 'تم دفع الفاتورة كلياً عبر التحويل الإلكتروني الفوري في تاريخه.',
     alreadyPaid: true,
-    currency: 'EGP'
+    currency: 'EGP',
+    depositAmount: 0,
+    remainingAmount: 0,
+    shippingCompany: '',
+    trackingNumber: ''
   },
   {
     id: 'inv3',
@@ -217,6 +225,10 @@ export const INITIAL_INVOICES: Invoice[] = [
     total: 7182.00,
     notes: 'برجاء سرعة سداد القيمة المطلوبة لتجنب انقطاع الخدمة السنوي.',
     alreadyPaid: false,
-    currency: 'EGP'
+    currency: 'EGP',
+    depositAmount: 0,
+    remainingAmount: 0,
+    shippingCompany: '',
+    trackingNumber: ''
   }
 ];

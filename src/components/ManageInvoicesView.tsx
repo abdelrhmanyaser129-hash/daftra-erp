@@ -12,7 +12,10 @@ import {
   ChevronLeft,
   ChevronRight,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Pencil,
+  Trash2,
+  MessageCircle
 } from 'lucide-react';
 import { Invoice } from '../types';
 import { supabase } from '../lib/supabase';
@@ -20,9 +23,10 @@ import { supabase } from '../lib/supabase';
 interface ManageInvoicesViewProps {
   setView: (view: string) => void;
   searchQuery?: string;
+  onEditInvoice?: (id: string) => void;
 }
 
-export default function ManageInvoicesView({ setView, searchQuery = '' }: ManageInvoicesViewProps) {
+export default function ManageInvoicesView({ setView, searchQuery = '', onEditInvoice }: ManageInvoicesViewProps) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   useEffect(() => {
@@ -51,6 +55,10 @@ export default function ManageInvoicesView({ setView, searchQuery = '' }: Manage
     notes: row.notes || '',
     alreadyPaid: row.already_paid || false,
     currency: row.currency || 'EGP',
+    depositAmount: row.deposit_amount || 0,
+    remainingAmount: row.remaining_amount || 0,
+    shippingCompany: row.shipping_company || '',
+    trackingNumber: row.tracking_number || '',
   });
 
   // Advanced search parameters matching the Daftra UI screenshot
@@ -139,6 +147,78 @@ export default function ManageInvoicesView({ setView, searchQuery = '' }: Manage
   };
 
   // Filter dynamic invoices list
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const handleDeleteInvoice = async (id: string) => {
+    const { data: dbInv } = await supabase.from('invoices').select('*').eq('id', id).single();
+    if (!dbInv) { setDeleteConfirmId(null); return; }
+    if (dbInv.status === 'paid') {
+      for (const item of (dbInv.items || [])) {
+        if (item.productId && item.quantity > 0) {
+          const wId = dbInv.warehouse_id;
+          const { data: stock } = await supabase.from('warehouse_stock').select('quantity').eq('product_id', item.productId).eq('warehouse_id', wId).maybeSingle();
+          const qty = stock ? parseFloat(stock.quantity) : 0;
+          await supabase.from('warehouse_stock').upsert({ product_id: item.productId, warehouse_id: wId, quantity: qty + item.quantity }, { onConflict: 'product_id,warehouse_id' });
+          await supabase.from('inventory_movements').insert({
+            product_id: item.productId, warehouse_id: wId, movement_type: 'restore',
+            reference_type: 'invoice_deleted', reference_id: id, reference_number: dbInv.invoice_number,
+            qty_before: qty, qty_change: item.quantity, qty_after: qty + item.quantity, created_by: 'system'
+          });
+        }
+      }
+      const dep = parseFloat(dbInv.deposit_amount) || 0;
+      if (dep > 0 && dbInv.treasury_id) {
+        const { data: tr } = await supabase.from('safes_banks').select('balance').eq('id', dbInv.treasury_id).single();
+        if (tr) {
+          const bal = parseFloat(tr.balance);
+          await supabase.from('safes_banks').update({ balance: Math.max(0, bal - dep) }).eq('id', dbInv.treasury_id);
+        }
+      }
+    }
+    if (dbInv.client_id) {
+      const { data: cl } = await supabase.from('clients').select('balance').eq('id', dbInv.client_id).single();
+      if (cl) {
+        const total = parseFloat(dbInv.total) || 0;
+        const dep = parseFloat(dbInv.deposit_amount) || 0;
+        const oldBal = parseFloat(cl.balance) || 0;
+        await supabase.from('clients').update({ balance: oldBal - total + dep }).eq('id', dbInv.client_id);
+      }
+    }
+    await supabase.from('invoices').delete().eq('id', id);
+    setInvoices(prev => prev.filter(i => i.id !== id));
+    setDeleteConfirmId(null);
+  };
+
+  const formatWhatsAppMessage = (inv: Invoice) => {
+    const dateStr = inv.date ? new Date(inv.date).toLocaleDateString('ar-EG') : '';
+    const lines = [
+      'السلام عليكم',
+      '',
+      'تفاصيل طلبكم:',
+      '',
+      `رقم الفاتورة: ${inv.invoiceNumber}`,
+      `اسم العميل: ${inv.clientName}`,
+      `تاريخ الفاتورة: ${dateStr}`,
+      `إجمالي الفاتورة: ${inv.total.toLocaleString('ar-EG')} جنيه`,
+      `المدفوع (ديبوزيت): ${(inv.depositAmount || 0).toLocaleString('ar-EG')} جنيه`,
+      `المتبقي: ${(inv.remainingAmount || inv.total - (inv.depositAmount || 0)).toLocaleString('ar-EG')} جنيه`,
+    ];
+    if (inv.shippingCompany) lines.push(`شركة الشحن: ${inv.shippingCompany}`);
+    if (inv.trackingNumber) lines.push(`رقم بوليصة الشحن: ${inv.trackingNumber}`);
+    lines.push('');
+    lines.push('شكراً لتعاملكم معنا.');
+    return encodeURIComponent(lines.join('\n'));
+  };
+
+  const handleWhatsApp = async (inv: Invoice) => {
+    if (!inv.clientName) { alert('لا يوجد اسم عميل لإرسال الواتساب.'); return; }
+    const { data: clients } = await supabase.from('clients').select('mobile, phone').eq('name', inv.clientName).limit(1);
+    const phone = clients && clients.length > 0 ? (clients[0].mobile || clients[0].phone) : '';
+    if (!phone) { alert('لا يوجد رقم هاتف للعميل.'); return; }
+    const msg = formatWhatsAppMessage(inv);
+    window.open(`https://wa.me/${phone.replace(/^0+/, '2')}?text=${msg}`, '_blank');
+  };
+
   const filteredInvoices = invoices.filter(inv => {
     // 1. Invoice status tag
     if (activeResultsTab === 'overdue' && inv.status !== 'overdue') return false;
@@ -760,6 +840,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '' }: Manage
                     <th className="p-3 w-1/6 text-right">التاريخ</th>
                     <th className="p-3 w-1/6 text-left">قيمة الفاتورة</th>
                     <th className="p-3 text-center">حالة السداد</th>
+                    <th className="p-3 text-center w-28">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#dae3ec] bg-white">
@@ -784,6 +865,48 @@ export default function ManageInvoicesView({ setView, searchQuery = '' }: Manage
                           {inv.status === 'unpaid' && '■ غير مدفوعة'}
                           {inv.status === 'draft' && '◇ مسودة'}
                         </span>
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => onEditInvoice ? onEditInvoice(inv.id) : setView('create-invoice')}
+                            className="p-1.5 text-slate-400 hover:text-daftra-blue hover:bg-slate-100 rounded transition-all cursor-pointer"
+                            title="تعديل الفاتورة"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleWhatsApp(inv)}
+                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-all cursor-pointer"
+                            title="إرسال عبر واتساب"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                          {deleteConfirmId === inv.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => handleDeleteInvoice(inv.id)}
+                                className="px-2 py-1 text-[10px] bg-rose-600 text-white rounded font-bold cursor-pointer hover:bg-rose-700"
+                              >
+                                تأكيد
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirmId(null)}
+                                className="px-2 py-1 text-[10px] bg-slate-200 text-slate-700 rounded font-bold cursor-pointer hover:bg-slate-300"
+                              >
+                                إلغاء
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setDeleteConfirmId(inv.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                              title="حذف الفاتورة"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

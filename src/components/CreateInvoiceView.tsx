@@ -30,10 +30,12 @@ import { INITIAL_PRODUCTS } from '../data';
 
 interface CreateInvoiceViewProps {
   setView: (view: string) => void;
+  editInvoiceId?: string | null;
 }
 
 export default function CreateInvoiceView({
-  setView
+  setView,
+  editInvoiceId
 }: CreateInvoiceViewProps) {
   const [clients, setClients] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -52,6 +54,35 @@ export default function CreateInvoiceView({
     supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
     supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
   }, []);
+
+  useEffect(() => {
+    if (!editInvoiceId) return;
+    supabase.from('invoices').select('*').eq('id', editInvoiceId).single().then(({ data, error }) => {
+      if (error || !data) return;
+      setInvoiceNumber(data.invoice_number || '');
+      setInvoiceDate(data.date || '');
+      setIssueDate(data.issue_date || '');
+      setSalesAgent(data.sales_agent || '');
+      setPaymentTerms(data.payment_terms || '');
+      setBillingTemplate(data.billing_template || '');
+      setGlobalDiscountType(data.discount_type || 'percentage');
+      setGlobalDiscountValue(data.discount_value || 0);
+      setAdjustmentValue(data.adjustment || 0);
+      setNotes(data.notes || '');
+      setAlreadyPaid(data.already_paid || false);
+      setSelectedWarehouseId(data.warehouse_id || '');
+      setSelectedTreasuryId(data.treasury_id || '');
+      setPaymentMethod(data.payment_method || 'نقدا');
+      setDepositAmount(data.deposit_amount || 0);
+      setShippingCompany(data.shipping_company || '');
+      setTrackingNumber(data.tracking_number || '');
+      setItems(data.items && data.items.length > 0 ? data.items.map((i: any) => ({ ...i, id: `row-${Date.now()}-${Math.random()}` })) : [{ id: 'row-1', productId: '', itemName: '', description: '', unitPrice: 0, quantity: 1, discount: 0, taxValue: 14, total: 0 }]);
+      if (data.client_id) {
+        setSelectedClientId(data.client_id);
+        setClientSearchQuery(data.client_name || '');
+      }
+    });
+  }, [editInvoiceId]);
 
   const mapClientRow = (row: any): any => ({
     id: row.id,
@@ -133,6 +164,12 @@ export default function CreateInvoiceView({
   const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
+
+  const [depositAmount, setDepositAmount] = useState<number>(0);
+  const [shippingCompany, setShippingCompany] = useState<string>('');
+  const [trackingNumber, setTrackingNumber] = useState<string>('');
+
+  const remainingAmount = Math.max(0, grandTotal - (depositAmount || 0));
 
   useEffect(() => {
     let computedSubtotal = 0;
@@ -305,121 +342,82 @@ export default function CreateInvoiceView({
 
     const customer = finalSelectedClient;
 
-    const newInvoice: any = {
-      invoiceNumber,
+    const deposit = depositAmount || 0;
+    const remaining = grandTotal - deposit;
+
+    const invoicePayload: any = {
+      invoice_number: invoiceNumber,
       date: invoiceDate,
-      issueDate,
-      clientName: customer.fullName,
-      salesAgent,
-      paymentTerms,
+      issue_date: issueDate,
+      client_id: customer.id,
+      client_name: customer.fullName,
+      sales_agent: salesAgent,
+      payment_terms: paymentTerms || '',
       items,
       status: calculatedStatusValue,
-      discountType: globalDiscountType,
-      discountValue: globalDiscountValue,
+      discount_type: globalDiscountType,
+      discount_value: globalDiscountValue,
       adjustment: adjustmentValue,
       subtotal,
       total: grandTotal,
       notes,
-      alreadyPaid,
-      currency: 'EGP'
-    };
-
-    const { data: newInv, error: invError } = await supabase.from('invoices').insert({
-      invoice_number: newInvoice.invoiceNumber,
-      date: newInvoice.date,
-      issue_date: newInvoice.issueDate,
-      client_id: customer.id,
-      client_name: customer.fullName,
-      sales_agent: newInvoice.salesAgent,
-      payment_terms: newInvoice.paymentTerms,
-      items: newInvoice.items,
-      status: newInvoice.status,
-      discount_type: newInvoice.discountType,
-      discount_value: newInvoice.discountValue,
-      adjustment: newInvoice.adjustment,
-      subtotal: newInvoice.subtotal,
-      total: newInvoice.total,
-      notes: newInvoice.notes,
-      already_paid: newInvoice.alreadyPaid,
-      currency: newInvoice.currency,
+      already_paid: alreadyPaid,
+      currency: 'EGP',
       warehouse_id: selectedWarehouseId || null,
       treasury_id: selectedTreasuryId || null,
-      payment_method: calculatedStatusValue === 'paid' ? paymentMethod : ''
-    }).select().single();
+      payment_method: calculatedStatusValue === 'paid' ? paymentMethod : '',
+      deposit_amount: deposit,
+      remaining_amount: remaining,
+      shipping_company: shippingCompany,
+      tracking_number: trackingNumber
+    };
 
-    if (invError) {
-      alert('فشل حفظ الفاتورة: ' + invError.message);
-      return;
+    let invoiceId: string;
+    let invoiceNumberStr: string;
+
+    if (editInvoiceId) {
+      const { data: upd, error: updErr } = await supabase.from('invoices').update(invoicePayload).eq('id', editInvoiceId).select().single();
+      if (updErr) { alert('فشل تحديث الفاتورة: ' + updErr.message); return; }
+      invoiceId = upd.id;
+      invoiceNumberStr = upd.invoice_number;
+    } else {
+      const { data: ins, error: insErr } = await supabase.from('invoices').insert(invoicePayload).select().single();
+      if (insErr) { alert('فشل حفظ الفاتورة: ' + insErr.message); return; }
+      invoiceId = ins.id;
+      invoiceNumberStr = ins.invoice_number;
     }
 
-    if (calculatedStatusValue === 'paid' && newInv) {
+    if (calculatedStatusValue === 'paid') {
       for (const item of items) {
         if (item.productId && item.quantity > 0) {
-          await recordInventoryMovement(
-            item.productId,
-            selectedWarehouseId,
-            'sale',
-            'invoice',
-            newInv.id,
-            newInv.invoice_number,
-            -item.quantity,
-            salesAgent
-          );
+          await recordInventoryMovement(item.productId, selectedWarehouseId, 'sale', 'invoice', invoiceId, invoiceNumberStr, -item.quantity, salesAgent);
         }
       }
 
-      const { data: treasury } = await supabase
-        .from('safes_banks')
-        .select('balance')
-        .eq('id', selectedTreasuryId)
-        .single();
-
-      const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
-      const newBalance = currentBalance + grandTotal;
-
-      const { error: treasuryUpdateErr } = await supabase
-        .from('safes_banks')
-        .update({ balance: newBalance })
-        .eq('id', selectedTreasuryId);
-
-      if (treasuryUpdateErr) {
-        console.error('Error updating treasury balance:', treasuryUpdateErr);
+      if (deposit > 0) {
+        const { data: treasury } = await supabase.from('safes_banks').select('balance').eq('id', selectedTreasuryId).single();
+        const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
+        const newBalance = currentBalance + deposit;
+        await supabase.from('safes_banks').update({ balance: newBalance }).eq('id', selectedTreasuryId);
+        await supabase.from('treasury_transactions').insert({
+          treasury_id: selectedTreasuryId,
+          transaction_type: 'sale_payment',
+          reference_type: 'invoice',
+          reference_id: invoiceId,
+          reference_number: invoiceNumberStr,
+          description: `تحصيل دفعة مقدمة ${deposit} ج.م من ${customer.fullName} - فاتورة ${invoiceNumberStr}`,
+          amount: deposit,
+          balance_before: currentBalance,
+          balance_after: newBalance,
+          created_by: salesAgent
+        });
       }
 
-      const { error: treasuryTxErr } = await supabase.from('treasury_transactions').insert({
-        treasury_id: selectedTreasuryId,
-        transaction_type: 'sale_payment',
-        reference_type: 'invoice',
-        reference_id: newInv.id,
-        reference_number: newInv.invoice_number,
-        description: `تحصيل قيمة الفاتورة ${newInv.invoice_number} من ${customer.fullName}`,
-        amount: grandTotal,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        created_by: salesAgent
-      });
-
-      if (treasuryTxErr) {
-        console.error('Error inserting treasury transaction:', treasuryTxErr);
-      }
-
-      const { error: balanceErr } = await supabase
-        .from('clients')
-        .update({ balance: (Number(customer.balance) || 0) + grandTotal })
-        .eq('id', customer.id);
-
-      if (balanceErr) {
-        console.error('Error updating client balance:', balanceErr);
-      }
-    } else if (calculatedStatusValue !== 'draft' && newInv) {
-      const { error: balanceErr } = await supabase
-        .from('clients')
-        .update({ balance: (Number(customer.balance) || 0) + grandTotal })
-        .eq('id', customer.id);
-
-      if (balanceErr) {
-        console.error('Error updating client balance:', balanceErr);
-      }
+      const oldBalance = Number(customer.balance) || 0;
+      await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
+    } else if (calculatedStatusValue !== 'draft') {
+      const oldBalance = Number(customer.balance) || 0;
+      await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
     }
 
     setView('manage-invoices');
@@ -439,8 +437,8 @@ export default function CreateInvoiceView({
             <FileText className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-md font-bold">إنشاء فاتورة مبيعات</h2>
-            <p className="text-[11px] text-slate-300">قم بتعبئة البنود والضرائب واختيار العميل لإصدار الفاتورة</p>
+            <h2 className="text-md font-bold">{editInvoiceId ? 'تعديل فاتورة مبيعات' : 'إنشاء فاتورة مبيعات'}</h2>
+            <p className="text-[11px] text-slate-300">{editInvoiceId ? 'قم بتعديل البنود والبيانات المطلوبة ثم حفظ التغييرات' : 'قم بتعبئة البنود والضرائب واختيار العميل لإصدار الفاتورة'}</p>
           </div>
         </div>
 
@@ -914,6 +912,22 @@ export default function CreateInvoiceView({
             >
               الخصم والتسوية
             </button>
+            <button
+              onClick={() => setActiveTab('deposit')}
+              className={`px-3 py-1.5 rounded text-xs font-bold shrink-0 transition-colors ${
+                activeTab === 'deposit' ? 'bg-daftra-light-blue text-daftra-blue' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              الدفعة المقدمة
+            </button>
+            <button
+              onClick={() => setActiveTab('shipping')}
+              className={`px-3 py-1.5 rounded text-xs font-bold shrink-0 transition-colors ${
+                activeTab === 'shipping' ? 'bg-daftra-light-blue text-daftra-blue' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              معلومات الشحن
+            </button>
           </div>
 
           {activeTab === 'discount' && (
@@ -948,6 +962,64 @@ export default function CreateInvoiceView({
                     onChange={(e) => setAdjustmentValue(parseFloat(e.target.value) || 0)}
                     placeholder="0.00"
                     className="w-full px-2.5 py-1.5 bg-white border border-daftra-border rounded text-center font-mono font-bold text-indigo-700"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'deposit' && (
+            <div className="bg-sky-50/50 p-4 rounded border border-sky-100 space-y-3.5 text-xs">
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">المبلغ المدفوع مقدماً (ديبوزيت):</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0)}
+                  placeholder="0"
+                  className="w-full px-2.5 py-1.5 bg-white border border-daftra-border rounded text-center font-mono font-bold text-emerald-700"
+                />
+              </div>
+              <div className="bg-white rounded border border-sky-200 p-3 space-y-2">
+                <div className="flex justify-between text-slate-600">
+                  <span>إجمالي الفاتورة:</span>
+                  <span className="font-mono font-bold">{grandTotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+                </div>
+                <div className="flex justify-between text-emerald-600 font-bold">
+                  <span>المدفوع مقدماً:</span>
+                  <span className="font-mono">{depositAmount.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+                </div>
+                <div className="flex justify-between text-rose-600 font-bold border-t border-sky-100 pt-2">
+                  <span>المبلغ المتبقي:</span>
+                  <span className="font-mono">{remainingAmount.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400">سيتم إضافة المبلغ المدفوع إلى الخزينة ولن يضاف إجمالي الفاتورة بالكامل. يتم تحديث رصيد العميل (مدين = إجمالي الفاتورة، دائن = المدفوع مقدماً).</p>
+            </div>
+          )}
+
+          {activeTab === 'shipping' && (
+            <div className="bg-indigo-50/50 p-4 rounded border border-indigo-100 space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">شركة الشحن:</label>
+                  <input
+                    type="text"
+                    value={shippingCompany}
+                    onChange={(e) => setShippingCompany(e.target.value)}
+                    placeholder="مثال: Aramex, Bosta, Mylerz, DHL, SMSA"
+                    className="w-full px-2.5 py-1.5 bg-white border border-daftra-border rounded font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">رقم بوليصة الشحن (Tracking):</label>
+                  <input
+                    type="text"
+                    value={trackingNumber}
+                    onChange={(e) => setTrackingNumber(e.target.value)}
+                    placeholder="مثال: TRK-123456789"
+                    className="w-full px-2.5 py-1.5 bg-white border border-daftra-border rounded font-mono font-bold text-center"
                   />
                 </div>
               </div>
@@ -1014,6 +1086,24 @@ export default function CreateInvoiceView({
                 <span>الصافي المستحق النهائي:</span>
                 <span className="font-mono text-daftra-blue font-extrabold text-base">{grandTotal.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
               </div>
+              {depositAmount > 0 && (
+                <>
+                  <div className="flex justify-between text-emerald-600 font-bold pt-1">
+                    <span>المدفوع مقدماً:</span>
+                    <span className="font-mono">{depositAmount.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+                  </div>
+                  <div className="flex justify-between text-rose-600 font-bold border-t border-slate-100 pt-1">
+                    <span>المتبقي:</span>
+                    <span className="font-mono">{remainingAmount.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ج.م</span>
+                  </div>
+                </>
+              )}
+              {(shippingCompany || trackingNumber) && (
+                <div className="flex justify-between text-indigo-600 font-semibold text-[10px] pt-1 border-t border-slate-100">
+                  <span>الشحن:</span>
+                  <span className="font-mono">{shippingCompany || ''}{shippingCompany && trackingNumber ? ' - ' : ''}{trackingNumber || ''}</span>
+                </div>
+              )}
             </div>
           </div>
 

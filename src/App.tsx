@@ -48,6 +48,7 @@ function AppContent() {
 
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState<string>('');
   const [clientSearchQuery, setClientSearchQuery] = useState<string>('');
+  const [editInvoiceId, setEditInvoiceId] = useState<string | null>(null);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'success' | 'info' | 'error'>('success');
@@ -102,11 +103,22 @@ function AppContent() {
     if (view !== 'manage-invoices') setInvoiceSearchQuery('');
     if (view !== 'manage-clients') setClientSearchQuery('');
     if (view !== 'client-detail') setSelectedClientId(null);
+    if (view !== 'create-invoice') setEditInvoiceId(null);
   };
 
   const handleSelectClient = (clientId: string) => {
     setSelectedClientId(clientId);
     setView('client-detail');
+  };
+
+  const handleEditInvoice = (invoiceId: string) => {
+    setEditInvoiceId(invoiceId);
+    setView('create-invoice');
+  };
+
+  const handleViewInvoices = () => {
+    setEditInvoiceId(null);
+    setView('manage-invoices');
   };
 
   const handleLogout = () => {
@@ -155,9 +167,9 @@ function AppContent() {
               transition={{ duration: 0.25, ease: 'easeInOut' }}
             >
               {currentView === 'dashboard' && <DashboardView setView={handleSetView} />}
-              {currentView === 'create-invoice' && <CreateInvoiceView setView={handleSetView} />}
+              {currentView === 'create-invoice' && <CreateInvoiceView setView={handleSetView} editInvoiceId={editInvoiceId} />}
               {currentView === 'add-client' && <AddClientView setView={handleSetView} />}
-              {currentView === 'manage-invoices' && <ManageInvoicesView setView={handleSetView} searchQuery={invoiceSearchQuery} />}
+              {currentView === 'manage-invoices' && <ManageInvoicesView setView={handleSetView} searchQuery={invoiceSearchQuery} onEditInvoice={handleEditInvoice} />}
               {currentView === 'manage-clients' && (
                 <ManageClientsView setView={handleSetView} searchQuery={clientSearchQuery} onSelectClient={handleSelectClient} />
               )}

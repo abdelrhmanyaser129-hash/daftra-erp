@@ -34,6 +34,10 @@ export interface Invoice {
   notes: string;
   alreadyPaid: boolean;
   currency: string;
+  depositAmount: number;
+  remainingAmount: number;
+  shippingCompany: string;
+  trackingNumber: string;
 }
 
 export interface Client {
