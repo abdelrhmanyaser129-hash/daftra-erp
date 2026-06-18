@@ -25,6 +25,7 @@ import WarehousesView from './components/WarehousesView';
 import BranchesView from './components/BranchesView';
 import CategoriesView from './components/CategoriesView';
 import BrandsView from './components/BrandsView';
+import InventorySettingsView from './components/InventorySettingsView';
 import PurchaseInvoicesView from './components/PurchaseInvoicesView';
 import PurchaseReturnsView from './components/PurchaseReturnsView';
 import PurchaseVendorsView from './components/PurchaseVendorsView';
@@ -188,6 +189,7 @@ function AppContent() {
               {currentView === 'branches' && <BranchesView setView={handleSetView} />}
               {currentView === 'categories' && <CategoriesView setView={handleSetView} />}
               {currentView === 'brands' && <BrandsView setView={handleSetView} />}
+              {currentView === 'inventory-settings' && <InventorySettingsView setView={handleSetView} />}
               {currentView === 'purchase-invoices' && <PurchaseInvoicesView setView={handleSetView} />}
               {currentView === 'purchase-returns' && <PurchaseReturnsView setView={handleSetView} />}
               {currentView === 'purchase-vendors' && <PurchaseVendorsView setView={handleSetView} />}
