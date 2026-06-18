@@ -420,7 +420,7 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                     </div>
                     {(clientSearchQuery.trim()
                       ? clients.filter(c =>
-                          c.fullName.toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
+                          (c.full_name || c.fullName || '').toLowerCase().includes(clientSearchQuery.toLowerCase()) ||
                           (c.mobile || '').includes(clientSearchQuery) ||
                           (c.phone || '').includes(clientSearchQuery)
                         )
@@ -429,13 +429,13 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
                       <div
                         key={c.id}
                         onMouseDown={() => {
-                          setClientFilter(c.fullName);
-                          setClientSearchQuery(c.fullName);
+                          setClientFilter(c.full_name || c.fullName || '');
+                          setClientSearchQuery(c.full_name || c.fullName || '');
                           setShowClientDropdown(false);
                         }}
                         className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0 flex justify-between items-center"
                       >
-                        <span className="font-bold text-slate-700">{c.fullName}</span>
+                        <span className="font-bold text-slate-700">{c.full_name || c.fullName}</span>
                         <span className="text-slate-400 text-[10px]">{c.mobile || c.phone}</span>
                       </div>
                     ))}

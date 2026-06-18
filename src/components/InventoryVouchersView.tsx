@@ -471,7 +471,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
                     >
                       <option value="أي عميل">أي عميل</option>
                       {clientsList.map(c => (
-                        <option key={c.id} value={c.fullName}>{c.fullName}</option>
+                        <option key={c.id} value={c.full_name || c.fullName || ''}>{c.full_name || c.fullName}</option>
                       ))}
                     </select>
                   </div>
@@ -879,7 +879,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
               >
                 <option value="أي عميل">أي عميل</option>
                 {clientsList.map(c => (
-                  <option key={c.id} value={c.fullName}>{c.fullName}</option>
+                  <option key={c.id} value={c.full_name || c.fullName || ''}>{c.full_name || c.fullName}</option>
                 ))}
               </select>
             </div>
