@@ -153,6 +153,10 @@ export default function TreasuryTransactionsView({ setView }: TreasuryTransactio
       'receipt_voucher_reversal': 'إلغاء سند قبض',
       'transfer_in': 'تحويل وارد',
       'transfer_out': 'تحويل صادر',
+      'sale_payment': 'دفعة مبيعات',
+      'payment_voucher': 'سند صرف',
+      'sale': 'بيع',
+      'purchase_payment': 'دفعة مشتريات',
     };
     return labels[type] || type;
   };

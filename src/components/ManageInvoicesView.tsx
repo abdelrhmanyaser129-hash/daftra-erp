@@ -227,7 +227,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
 
   const handleWhatsApp = async (inv: Invoice) => {
     if (!inv.clientName) { alert('لا يوجد اسم عميل لإرسال الواتساب.'); return; }
-    const { data: clients } = await supabase.from('clients').select('mobile, phone').eq('name', inv.clientName).limit(1);
+    const { data: clients } = await supabase.from('clients').select('mobile, phone').eq('full_name', inv.clientName).limit(1);
     const phone = clients && clients.length > 0 ? (clients[0].mobile || clients[0].phone) : '';
     if (!phone) { alert('لا يوجد رقم هاتف للعميل.'); return; }
     const cleanPhone = normalizePhone(phone);

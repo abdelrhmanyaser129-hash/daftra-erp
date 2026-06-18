@@ -337,6 +337,8 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
       });
     }
 
+    await supabase.from('invoices').update({ status: 'returned' }).eq('id', selectedInvoiceId);
+
     setInvoices(prev => prev.map(inv =>
       inv.id === selectedInvoiceId ? { ...inv, status: 'returned', alreadyPaid: false } : inv
     ));

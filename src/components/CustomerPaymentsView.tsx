@@ -180,7 +180,7 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     }
 
     // Client balance update
-    const { data: client } = await supabase.from('clients').select('balance, id').eq('name', invoice.clientName).single();
+    const { data: client } = await supabase.from('clients').select('balance, id').eq('id', invoice.client_id).single();
     if (client) {
       const oldBal = parseFloat(client.balance) || 0;
       await supabase.from('clients').update({ balance: oldBal - paymentAmount }).eq('id', client.id);
