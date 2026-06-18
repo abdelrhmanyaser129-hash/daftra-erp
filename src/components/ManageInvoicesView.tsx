@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Invoice } from '../types';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 
 interface ManageInvoicesViewProps {
   setView: (view: string) => void;
@@ -163,14 +164,7 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
       for (const item of (dbInv.items || [])) {
         if (item.productId && item.quantity > 0) {
           const wId = dbInv.warehouse_id;
-          const { data: stock } = await supabase.from('warehouse_stock').select('quantity').eq('product_id', item.productId).eq('warehouse_id', wId).maybeSingle();
-          const qty = stock ? parseFloat(stock.quantity) : 0;
-          await supabase.from('warehouse_stock').upsert({ product_id: item.productId, warehouse_id: wId, quantity: qty + item.quantity }, { onConflict: 'product_id,warehouse_id' });
-          await supabase.from('inventory_movements').insert({
-            product_id: item.productId, warehouse_id: wId, movement_type: 'restore',
-            reference_type: 'invoice_deleted', reference_id: id, reference_number: dbInv.invoice_number,
-            qty_before: qty, qty_change: item.quantity, qty_after: qty + item.quantity, created_by: 'system'
-          });
+          await recordInventoryMovement({ productId: item.productId, warehouseId: wId, movementType: 'restore', referenceType: 'invoice_deleted', referenceId: id, referenceNumber: dbInv.invoice_number, qtyChange: item.quantity, createdBy: 'system' });
         }
       }
       const dep = parseFloat(dbInv.deposit_amount) || 0;
@@ -242,6 +236,8 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
     if (activeResultsTab === 'unpaid' && inv.status !== 'unpaid') return false;
     if (activeResultsTab === 'draft' && inv.status !== 'draft') return false;
     if (activeResultsTab === 'partial' && inv.status !== 'partial') return false;
+    if (activeResultsTab === 'returned' && inv.status !== 'returned') return false;
+    if (activeResultsTab === 'partially_returned' && inv.status !== 'partially_returned') return false;
 
     // Optional fields
     if (invoiceNumberFilter && !inv.invoiceNumber.toLowerCase().includes(invoiceNumberFilter.toLowerCase())) return false;
@@ -251,6 +247,8 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
       if (statusFilter === 'unpaid' && inv.status !== 'unpaid') return false;
       if (statusFilter === 'overdue' && inv.status !== 'overdue') return false;
       if (statusFilter === 'draft' && inv.status !== 'draft') return false;
+      if (statusFilter === 'returned' && inv.status !== 'returned') return false;
+      if (statusFilter === 'partially_returned' && inv.status !== 'partially_returned') return false;
     }
     if (clientFilter !== 'any') {
       const clientMatch = clients.find(c => (c.full_name || c.fullName) === inv.clientName);
@@ -920,13 +918,17 @@ export default function ManageInvoicesView({ setView, searchQuery = '', onEditIn
                           inv.status === 'paid' ? 'bg-[#e2f9e4] text-[#117622]' :
                           inv.status === 'overdue' ? 'bg-[#ffebee] text-[#c62828]' :
                           inv.status === 'unpaid' ? 'bg-[#fef3d6] text-[#b28400]' :
-                          inv.status === 'partial' ? 'bg-[#dbeafe] text-[#1d4ed8]' : 'bg-slate-100 text-slate-600'
+                          inv.status === 'partial' ? 'bg-[#dbeafe] text-[#1d4ed8]' :
+                          inv.status === 'returned' ? 'bg-orange-100 text-orange-700' :
+                          inv.status === 'partially_returned' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
                         }`}>
                           {inv.status === 'paid' && '● مدفوعة بالكامل'}
                           {inv.status === 'overdue' && '▲ متأخرة السداد'}
                           {inv.status === 'unpaid' && '■ غير مدفوعة'}
                           {inv.status === 'partial' && '◐ مدفوعة جزئياً'}
                           {inv.status === 'draft' && '◇ مسودة'}
+                          {inv.status === 'returned' && 'مرتجعة بالكامل'}
+                          {inv.status === 'partially_returned' && 'مرتجعة جزئياً'}
                         </span>
                       </td>
                       <td className="p-3 text-center">

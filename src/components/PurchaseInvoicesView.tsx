@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Plus,
@@ -83,6 +84,8 @@ interface PurchaseInvoice {
   paymentReference: string;
   currency: string;
   billingTemplate: string;
+  warehouse_id?: string;
+  treasury_id?: string;
 }
 
 interface Vendor {
@@ -163,6 +166,10 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
   const [safesBanks, setSafesBanks] = useState<{ id: string; name: string; type: string; balance: number }[]>([]);
   const [selectedTreasuryId, setSelectedTreasuryId] = useState<string>('');
 
+  // Warehouse
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
+
   // Load from Supabase
   useEffect(() => {
     const loadData = async () => {
@@ -194,6 +201,8 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
             paymentReference: row.payment_reference,
             currency: row.currency,
             billingTemplate: row.billing_template,
+            warehouse_id: row.warehouse_id,
+            treasury_id: row.treasury_id,
           }))
         );
       } else {
@@ -235,6 +244,12 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         setSafesBanks(safesData);
       } else {
         setSafesBanks([]);
+      }
+
+      const { data: whData } = await supabase.from('warehouses').select('id, name').order('name');
+      if (whData && whData.length > 0) {
+        setWarehouses(whData);
+        setSelectedWarehouseId(whData[0].id);
       }
     };
     loadData();
@@ -437,6 +452,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         issue_date: issueDate,
         vendor_name: vendor.name,
         vendor_id: vendor.id,
+        warehouse_id: selectedWarehouseId || null,
         sales_agent: 'أبو ياسر #000001 (أنت)',
         payment_terms: paymentTerms || 'فوري',
         items: finalItems,
@@ -485,9 +501,21 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       paymentReference: data.payment_reference,
       currency: data.currency,
       billingTemplate: data.billing_template,
+      warehouse_id: data.warehouse_id,
+      treasury_id: data.treasury_id,
     };
 
     setPurchaseInvoices([newPurchaseInvoice, ...purchaseInvoices]);
+
+    // Record inventory movements for purchased items
+    if (selectedWarehouseId) {
+      for (const item of finalItems) {
+        const matchedProduct = products.find(p => p.name === item.itemName);
+        if (matchedProduct) {
+          await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: selectedWarehouseId, movementType: 'purchase', referenceType: 'purchase_invoice', referenceId: data.id, referenceNumber: data.invoice_number, qtyChange: item.quantity, createdBy: 'system' });
+        }
+      }
+    }
 
     // Update vendor balance
     const { data: vendorBalData } = await supabase
@@ -557,7 +585,8 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
     setAlreadyPaid(invoice.alreadyPaid);
     setPaymentMethod(invoice.paymentMethod);
     setPaymentReference(invoice.paymentReference);
-    setSelectedTreasuryId((invoice as any).treasury_id || '');
+    setSelectedTreasuryId(invoice.treasury_id || '');
+    setSelectedWarehouseId(invoice.warehouse_id || '');
     setShowProductDropdown({});
     setProductSearchText({});
     setCurrentMode('add');
@@ -599,6 +628,16 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
 
     const calculatedGrandTotal = sumLineTotals - globalDiscount + Number(adjustmentValue);
 
+    const { data: oldInvoice } = await supabase
+      .from('purchase_invoices')
+      .select('items, warehouse_id, total, vendor_id, already_paid, treasury_id')
+      .eq('id', editingInvoiceId)
+      .single();
+
+    const oldTotal = oldInvoice ? Number(oldInvoice.total) || 0 : 0;
+    const oldAlreadyPaid = oldInvoice?.already_paid || false;
+    const oldTreasuryId = oldInvoice?.treasury_id || null;
+
     const { data, error } = await supabase
       .from('purchase_invoices')
       .update({
@@ -607,6 +646,7 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
         issue_date: issueDate,
         vendor_name: vendor.name,
         vendor_id: vendor.id,
+        warehouse_id: selectedWarehouseId || null,
         sales_agent: 'أبو ياسر #000001 (أنت)',
         payment_terms: paymentTerms || 'فوري',
         items: finalItems,
@@ -634,20 +674,69 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
       return;
     }
 
-    // Update vendor balance
+    // Reverse old inventory movements, record new ones
+    if (oldInvoice) {
+      const oldWarehouseId = oldInvoice.warehouse_id || selectedWarehouseId;
+      if (oldWarehouseId) {
+        for (const item of (oldInvoice.items || [])) {
+          const matchedProduct = products.find(p => p.name === item.itemName);
+          if (matchedProduct) {
+            await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: oldWarehouseId, movementType: 'purchase', referenceType: 'purchase_invoice', referenceId: editingInvoiceId, referenceNumber: invoiceNumber, qtyChange: -item.quantity, createdBy: 'system' });
+          }
+        }
+      }
+    }
+    if (selectedWarehouseId) {
+      for (const item of finalItems) {
+        const matchedProduct = products.find(p => p.name === item.itemName);
+        if (matchedProduct) {
+          await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: selectedWarehouseId, movementType: 'purchase', referenceType: 'purchase_invoice', referenceId: editingInvoiceId, referenceNumber: invoiceNumber, qtyChange: item.quantity, createdBy: 'system' });
+        }
+      }
+    }
+
+    // Revert old vendor balance, apply new
     const { data: vendorBalData } = await supabase
       .from('purchase_vendors')
       .select('balance')
       .eq('id', vendor.id)
       .single();
     const currentBal = Number(vendorBalData?.balance || 0);
+    const newVendorBal = currentBal - oldTotal + calculatedGrandTotal;
     await supabase
       .from('purchase_vendors')
-      .update({ balance: currentBal + calculatedGrandTotal })
+      .update({ balance: Math.max(0, newVendorBal) })
       .eq('id', vendor.id);
 
-    // Treasury integration: deduct from treasury and record transaction
-    if (alreadyPaid && selectedTreasuryId) {
+    // Treasury: revert old payment, apply new if needed
+    if (oldAlreadyPaid && oldTreasuryId) {
+      const oldTreasuryAmount = oldTotal;
+      if (oldTreasuryAmount > 0) {
+        const { data: tData } = await supabase
+          .from('safes_banks')
+          .select('balance')
+          .eq('id', oldTreasuryId)
+          .single();
+        if (tData) {
+          const balBefore = Number(tData.balance) || 0;
+          const balAfter = balBefore + oldTreasuryAmount;
+          await supabase.from('safes_banks').update({ balance: balAfter }).eq('id', oldTreasuryId);
+          await supabase.from('treasury_transactions').insert({
+            treasury_id: oldTreasuryId,
+            transaction_type: 'purchase_payment_reversal',
+            reference_type: 'purchase_invoice_updated',
+            reference_id: editingInvoiceId,
+            reference_number: invoiceNumber,
+            description: `إلغاء دفع فاتورة شراء #${invoiceNumber}`,
+            amount: oldTreasuryAmount,
+            balance_before: balBefore,
+            balance_after: balAfter,
+            created_by: 'system',
+          });
+        }
+      }
+    }
+    if (alreadyPaid && selectedTreasuryId && calculatedGrandTotal > 0) {
       const { data: treasuryData } = await supabase
         .from('safes_banks')
         .select('balance')
@@ -686,6 +775,73 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
   const handleDeleteInvoice = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('هل أنت متأكد من رغبتك في حذف فاتورة الشراء هذه نهائياً؟')) {
+      const { data: invData } = await supabase
+        .from('purchase_invoices')
+        .select('items, invoice_number, warehouse_id, total, vendor_id, already_paid, treasury_id')
+        .eq('id', id)
+        .single();
+
+      // Revert inventory
+      if (invData && invData.warehouse_id) {
+        for (const item of (invData.items || [])) {
+          const matchedProduct = products.find(p => p.name === item.itemName);
+          if (matchedProduct) {
+            await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: invData.warehouse_id, movementType: 'restore', referenceType: 'purchase_invoice', referenceId: id, referenceNumber: invData.invoice_number, qtyChange: -item.quantity, createdBy: 'system' });
+          }
+        }
+      }
+
+      // Revert vendor balance
+      if (invData && invData.vendor_id && invData.total) {
+        const invTotal = Number(invData.total) || 0;
+        if (invTotal > 0) {
+          const { data: vendorBalData } = await supabase
+            .from('purchase_vendors')
+            .select('balance')
+            .eq('id', invData.vendor_id)
+            .single();
+          const currentBal = Number(vendorBalData?.balance || 0);
+          await supabase
+            .from('purchase_vendors')
+            .update({ balance: Math.max(0, currentBal - invTotal) })
+            .eq('id', invData.vendor_id);
+        }
+      }
+
+      // Revert treasury if already paid
+      if (invData && invData.already_paid && invData.treasury_id && invData.total) {
+        const invTotal = Number(invData.total) || 0;
+        if (invTotal > 0) {
+          const { data: treasuryData } = await supabase
+            .from('safes_banks')
+            .select('balance')
+            .eq('id', invData.treasury_id)
+            .single();
+          if (treasuryData) {
+            const balanceBefore = Number(treasuryData.balance) || 0;
+            const balanceAfter = balanceBefore + invTotal;
+            await supabase
+              .from('safes_banks')
+              .update({ balance: balanceAfter })
+              .eq('id', invData.treasury_id);
+            await supabase
+              .from('treasury_transactions')
+              .insert({
+                treasury_id: invData.treasury_id,
+                transaction_type: 'purchase_payment_reversal',
+                reference_type: 'purchase_invoice_deleted',
+                reference_id: id,
+                reference_number: invData.invoice_number,
+                description: `إلغاء دفع فاتورة شراء #${invData.invoice_number}`,
+                amount: invTotal,
+                balance_before: balanceBefore,
+                balance_after: balanceAfter,
+                created_by: 'system',
+              });
+          }
+        }
+      }
+
       const { error } = await supabase
         .from('purchase_invoices')
         .delete()
@@ -1205,7 +1361,19 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                       </select>
                     </div>
 
-                    <div className="col-span-8">
+                    <div className="col-span-4">
+                      <select
+                        value={selectedWarehouseId}
+                        onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                        className="w-full text-right p-2 bg-white border border-slate-200 rounded text-xs font-bold outline-none focus:ring-1 focus:ring-[#0074b1]"
+                      >
+                        <option value="">(اختر المستودع)</option>
+                        {warehouses.map((w) => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-span-4">
                       <select
                         value={selectedVendorId}
                         onChange={(e) => setSelectedVendorId(e.target.value)}
@@ -1218,11 +1386,6 @@ export default function PurchaseInvoicesView({ setView }: PurchaseInvoicesViewPr
                       </select>
                     </div>
 
-                  </div>
-
-                  <div className="text-[11px] text-slate-400 font-bold bg-white p-2 rounded border border-slate-150 flex items-center gap-1 flex-row-reverse">
-                    <HelpCircle className="w-3.5 h-3.5 text-[#0074b1]" />
-                    <span>يجب أن يتطابق المورد مع العقود الضريبية والمستودع المستلم.</span>
                   </div>
 
                 </div>

@@ -116,96 +116,85 @@ export default function SupplierStatementView({ setView }: SupplierStatementView
 
     try {
       const vendor = selectedVendor!;
-      const openingBalance = Number(vendor.opening_balance) || 0;
+      const openingBase = Number(vendor.opening_balance) || 0;
 
+      // Fetch ALL data (no date filter) to calculate opening balance from pre-range transactions
       const [invoicesResult, paymentsResult, returnsResult] = await Promise.all([
         supabase
           .from('purchase_invoices')
           .select('id, invoice_number, date, total, status, notes')
           .eq('vendor_id', selectedVendorId)
-          .gte('date', fromDate)
-          .lte('date', toDate)
-          .order('date', { ascending: true }),
+          .neq('status', 'draft'),
         supabase
           .from('purchase_vendor_payments')
-          .select('id, payment_number, amount, payment_date, notes')
-          .eq('vendor_id', selectedVendorId)
-          .gte('payment_date', fromDate)
-          .lte('payment_date', toDate)
-          .order('payment_date', { ascending: true }),
+          .select('id, payment_number, amount, payment_date, created_at, notes')
+          .eq('vendor_id', selectedVendorId),
         supabase
           .from('purchase_returns')
           .select('id, return_number, date, total, notes')
-          .eq('vendor_id', selectedVendorId)
-          .gte('date', fromDate)
-          .lte('date', toDate)
-          .order('date', { ascending: true }),
+          .eq('vendor_id', selectedVendorId),
       ]);
 
       if (invoicesResult.error) throw invoicesResult.error;
       if (paymentsResult.error) throw paymentsResult.error;
       if (returnsResult.error) throw returnsResult.error;
 
-      const transactions: Transaction[] = [];
-      let totalPurchases = 0;
-      let totalPayments = 0;
-      let totalReturns = 0;
-
-      const tempRows: { date: string; description: string; type: Transaction['type']; debit: number; credit: number; sortKey: string }[] = [];
+      const allRows: { date: string; description: string; type: Transaction['type']; debit: number; credit: number; sortKey: string }[] = [];
 
       (invoicesResult.data || []).forEach(inv => {
-        const total = Number(inv.total) || 0;
-        totalPurchases += total;
-        tempRows.push({
-          date: inv.date || '',
+        const date = inv.date || '';
+        allRows.push({
+          date,
           description: `فاتورة شراء #${inv.invoice_number}${inv.notes ? ` - ${inv.notes}` : ''}`,
           type: 'فاتورة شراء',
-          debit: total,
+          debit: Number(inv.total) || 0,
           credit: 0,
-          sortKey: `A_${inv.date}_${inv.invoice_number}`,
+          sortKey: `${date}_A_${inv.invoice_number}`,
         });
       });
 
       (paymentsResult.data || []).forEach(pmt => {
-        const amount = Number(pmt.amount) || 0;
-        totalPayments += amount;
-        tempRows.push({
-          date: pmt.payment_date || '',
+        const date = pmt.payment_date || (pmt.created_at ? pmt.created_at.split('T')[0] : '');
+        allRows.push({
+          date,
           description: `مدفوعات #${pmt.payment_number}${pmt.notes ? ` - ${pmt.notes}` : ''}`,
           type: 'مدفوعات',
           debit: 0,
-          credit: amount,
-          sortKey: `B_${pmt.payment_date}_${pmt.payment_number}`,
+          credit: Number(pmt.amount) || 0,
+          sortKey: `${date}_B_${pmt.payment_number}`,
         });
       });
 
       (returnsResult.data || []).forEach(ret => {
-        const total = Number(ret.total) || 0;
-        totalReturns += total;
-        tempRows.push({
-          date: ret.date || '',
+        const date = ret.date || '';
+        allRows.push({
+          date,
           description: `مرتجع #${ret.return_number}${ret.notes ? ` - ${ret.notes}` : ''}`,
           type: 'مرتجع',
           debit: 0,
-          credit: total,
-          sortKey: `C_${ret.date}_${ret.return_number}`,
+          credit: Number(ret.total) || 0,
+          sortKey: `${date}_C_${ret.return_number}`,
         });
       });
 
-      tempRows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+      allRows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+      const beforeRows = allRows.filter(row => row.date && row.date < fromDate);
+      const rangeRows = allRows.filter(row => (!row.date || row.date >= fromDate) && (!row.date || row.date <= toDate));
+      const openingBalance = beforeRows.reduce((sum, row) => sum + row.debit - row.credit, openingBase);
 
       let balance = openingBalance;
-      tempRows.forEach(row => {
+      const transactions = rangeRows.map(row => {
         balance += row.debit - row.credit;
-        transactions.push({ ...row, runningBalance: balance });
+        return { ...row, runningBalance: balance };
       });
 
       setReportData({
         vendorName: vendor.name,
         openingBalance,
-        totalPurchases,
-        totalPayments,
-        totalReturns,
+        totalPurchases: rangeRows.filter(row => row.type === 'فاتورة شراء').reduce((sum, row) => sum + row.debit, 0),
+        totalPayments: rangeRows.filter(row => row.type === 'مدفوعات').reduce((sum, row) => sum + row.credit, 0),
+        totalReturns: rangeRows.filter(row => row.type === 'مرتجع').reduce((sum, row) => sum + row.credit, 0),
         closingBalance: balance,
         transactions,
       });

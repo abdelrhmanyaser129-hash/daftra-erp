@@ -82,7 +82,8 @@ export default function AccountsChartView({ setView }: AccountsChartViewProps) {
   const [activeParentId, setActiveParentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [branchFilter, setBranchFilter] = useState('Main Branch');
+  const [branchFilter, setBranchFilter] = useState('الكل');
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
 
   // Modal State for adding/editing account
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
@@ -115,6 +116,9 @@ export default function AccountsChartView({ setView }: AccountsChartViewProps) {
 
   useEffect(() => {
     initializeAccounts();
+    supabase.from('branches').select('id, name').order('name').then(({ data }) => {
+      if (data) setBranches(data);
+    });
   }, []);
 
   const mapRowToAccount = (row: any): Account => ({
@@ -552,9 +556,10 @@ export default function AccountsChartView({ setView }: AccountsChartViewProps) {
                 onChange={(e) => setBranchFilter(e.target.value)}
                 className="border border-slate-200 bg-white px-2 py-1 rounded text-xs focus:ring-0 focus:outline-hidden"
               >
-                <option value="Main Branch">Main Branch</option>
-                <option value="Alex Branch">فرع الاسكندرية</option>
-                <option value="Cairo Branch">فرع القاهرة الرئيسي</option>
+                <option value="الكل">الكل</option>
+                {branches.map(b => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
               </select>
             </div>
 

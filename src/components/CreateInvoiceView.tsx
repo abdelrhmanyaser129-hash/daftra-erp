@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import {
   Plus,
   Trash2,
@@ -27,6 +28,14 @@ import {
 } from 'lucide-react';
 import { Client, Invoice, InvoiceItem, ProductService } from '../types';
 import { INITIAL_PRODUCTS } from '../data';
+import {
+  calculateInvoiceStatus,
+  getClientName,
+  recordCustomerPayment,
+  refreshClientBalance,
+  refreshInvoiceFinancials,
+  toNumber
+} from '../lib/financialCore';
 
 interface CreateInvoiceViewProps {
   setView: (view: string) => void;
@@ -277,50 +286,6 @@ export default function CreateInvoiceView({
     );
   };
 
-  const recordInventoryMovement = async (
-    productId: string,
-    warehouseId: string,
-    movementType: string,
-    referenceType: string,
-    referenceId: string,
-    referenceNumber: string,
-    qtyChange: number,
-    createdBy: string
-  ) => {
-    const { data: stock } = await supabase
-      .from('warehouse_stock')
-      .select('quantity')
-      .eq('product_id', productId)
-      .eq('warehouse_id', warehouseId)
-      .maybeSingle();
-
-    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
-    const qtyAfter = qtyBefore + qtyChange;
-
-    await supabase
-      .from('warehouse_stock')
-      .upsert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        quantity: qtyAfter
-      }, { onConflict: 'product_id,warehouse_id' });
-
-    await supabase
-      .from('inventory_movements')
-      .insert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        movement_type: movementType,
-        reference_type: referenceType,
-        reference_id: referenceId,
-        reference_number: referenceNumber,
-        qty_before: qtyBefore,
-        qty_change: qtyChange,
-        qty_after: qtyAfter,
-        created_by: createdBy
-      });
-  };
-
   const handleSaveDraft = async (statusOverride?: 'paid' | 'unpaid' | 'draft') => {
     const finalSelectedClient = clients.find(c => c.id === selectedClientId);
     if (!finalSelectedClient) {
@@ -328,17 +293,10 @@ export default function CreateInvoiceView({
       return;
     }
 
-    const deposit = depositAmount || 0;
-    const remaining = grandTotal - deposit;
+    const deposit = Math.max(0, Math.min(depositAmount || 0, grandTotal));
+    const remaining = Math.max(0, grandTotal - deposit);
 
-    let calculatedStatusValue: 'paid' | 'unpaid' | 'draft' | 'partial' = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
-    if (statusOverride !== 'draft') {
-      if (deposit > 0 && deposit >= grandTotal) {
-        calculatedStatusValue = 'paid';
-      } else if (deposit > 0 && deposit < grandTotal) {
-        calculatedStatusValue = 'partial';
-      }
-    }
+    const calculatedStatusValue = calculateInvoiceStatus(grandTotal, deposit, 0, statusOverride === 'draft');
 
     if ((calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') && !selectedWarehouseId) {
       alert('الرجاء اختيار المستودع لتسجيل حركة المخزون.');
@@ -357,13 +315,14 @@ export default function CreateInvoiceView({
     }
 
     const customer = finalSelectedClient;
+    const customerName = getClientName(customer);
 
     const invoicePayload: any = {
       invoice_number: invoiceNumber,
       date: invoiceDate,
       issue_date: issueDate,
       client_id: customer.id,
-      client_name: customer.fullName,
+      client_name: customerName,
       sales_agent: salesAgent,
       payment_terms: paymentTerms || '',
       items,
@@ -374,11 +333,12 @@ export default function CreateInvoiceView({
       subtotal,
       total: grandTotal,
       notes,
-      already_paid: alreadyPaid,
+      already_paid: calculatedStatusValue === 'paid',
       currency: 'EGP',
       warehouse_id: selectedWarehouseId || null,
       treasury_id: selectedTreasuryId || null,
-      payment_method: calculatedStatusValue === 'paid' ? paymentMethod : '',
+      payment_method: deposit > 0 ? paymentMethod : '',
+      paid: deposit,
       deposit_amount: deposit,
       remaining_amount: remaining,
       shipping_company: shippingCompany,
@@ -403,34 +363,42 @@ export default function CreateInvoiceView({
     if (calculatedStatusValue === 'paid' || calculatedStatusValue === 'partial') {
       for (const item of items) {
         if (item.productId && item.quantity > 0) {
-          await recordInventoryMovement(item.productId, selectedWarehouseId, 'sale', 'invoice', invoiceId, invoiceNumberStr, -item.quantity, salesAgent);
+          await recordInventoryMovement({ productId: item.productId, warehouseId: selectedWarehouseId, movementType: 'sale', referenceType: 'invoice', referenceId: invoiceId, referenceNumber: invoiceNumberStr, qtyChange: -item.quantity, createdBy: salesAgent });
         }
       }
 
       if (deposit > 0) {
-        const { data: treasury } = await supabase.from('safes_banks').select('balance').eq('id', selectedTreasuryId).single();
-        const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
-        const newBalance = currentBalance + deposit;
-        await supabase.from('safes_banks').update({ balance: newBalance }).eq('id', selectedTreasuryId);
-        await supabase.from('treasury_transactions').insert({
-          treasury_id: selectedTreasuryId,
-          transaction_type: 'sale_payment',
-          reference_type: 'invoice',
-          reference_id: invoiceId,
-          reference_number: invoiceNumberStr,
-          description: `تحصيل دفعة مقدمة ${deposit} ج.م من ${customer.fullName} - فاتورة ${invoiceNumberStr}`,
-          amount: deposit,
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          created_by: salesAgent
-        });
+        const { data: existingPayments, error: existingPaymentsError } = await supabase
+          .from('customer_payments')
+          .select('amount')
+          .eq('invoice_id', invoiceId)
+          .eq('status', 'completed');
+        if (existingPaymentsError) {
+          alert('فشل تحميل دفعات الفاتورة: ' + existingPaymentsError.message);
+          return;
+        }
+        const paidAlready = (existingPayments || []).reduce((sum: number, row: any) => sum + toNumber(row.amount), 0);
+        const amountToRecord = deposit - paidAlready;
+        if (amountToRecord > 0.009) {
+          await recordCustomerPayment({
+            invoice: { ...invoicePayload, id: invoiceId, invoice_number: invoiceNumberStr },
+            amount: amountToRecord,
+            paymentMethod,
+            paymentDate: invoiceDate,
+            treasuryId: selectedTreasuryId,
+            paymentNumber: `PAY-${Date.now()}`,
+            notes: 'Initial sales invoice payment',
+            createdBy: salesAgent,
+          });
+        } else {
+          await refreshInvoiceFinancials(invoiceId);
+        }
       }
 
-      const oldBalance = Number(customer.balance) || 0;
-      await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
+      await refreshClientBalance(customer.id);
     } else if (calculatedStatusValue !== 'draft') {
-      const oldBalance = Number(customer.balance) || 0;
-      await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
+      await refreshInvoiceFinancials(invoiceId);
+      await refreshClientBalance(customer.id);
     }
 
     setView('manage-invoices');
@@ -1191,7 +1159,7 @@ export default function CreateInvoiceView({
                 <div className="flex justify-between items-start border-b border-slate-100 pb-5">
                   <div className="space-y-1">
                     <h1 className="text-base sm:text-lg font-black text-daftra-dark-blue">Abdo Yaser</h1>
-                    <p className="text-[10px] text-slate-400">Main Branch - القاهرة، مصر</p>
+                    <p className="text-[10px] text-slate-400">الفرع الرئيسي - القاهرة، مصر</p>
                     <p className="text-[10px] text-slate-400">سجل تجاري: 48593/ق | بطاقة ضريبية: 738-429-105</p>
                   </div>
                   <div className="text-left">

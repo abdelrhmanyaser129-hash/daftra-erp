@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import { 
   ArrowLeft, Info, Search, CheckCircle, Boxes, AlertOctagon, AlertTriangle,
   Minus, Plus, Trash2, X, Edit3, PlusCircle, Building2, Hash, MapPin, FileText
@@ -16,6 +17,13 @@ interface Warehouse {
   notes: string;
   status: string;
   is_default?: boolean;
+  branch_id?: string;
+}
+
+interface Branch {
+  id: string;
+  name: string;
+  code: string;
 }
 
 interface Product {
@@ -56,6 +64,8 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
   const [whFormPhone, setWhFormPhone] = useState('');
   const [whFormNotes, setWhFormNotes] = useState('');
   const [whFormStatus, setWhFormStatus] = useState('نشط');
+  const [whFormBranchId, setWhFormBranchId] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
 
   // Stock management state
   const [products, setProducts] = useState<Product[]>([]);
@@ -71,6 +81,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     loadWarehouses();
     loadProducts();
     loadStock();
+    loadBranches();
   }, []);
 
   const loadWarehouses = async () => {
@@ -113,6 +124,11 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     setStock(stockLevels);
   };
 
+  const loadBranches = async () => {
+    const { data } = await supabase.from('branches').select('id, name, code').order('name');
+    if (data) setBranches(data as Branch[]);
+  };
+
   const handleOpenAddWarehouse = () => {
     setEditingWarehouseId(null);
     setWhFormName('');
@@ -122,6 +138,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     setWhFormPhone('');
     setWhFormNotes('');
     setWhFormStatus('نشط');
+    setWhFormBranchId('');
     setShowWarehouseForm(true);
   };
 
@@ -134,6 +151,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     setWhFormPhone(wh.phone || '');
     setWhFormNotes(wh.notes || '');
     setWhFormStatus(wh.status || 'نشط');
+    setWhFormBranchId(wh.branch_id || '');
     setShowWarehouseForm(true);
   };
 
@@ -141,7 +159,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     e.preventDefault();
     if (!whFormName.trim()) { alert('الرجاء إدخال اسم المستودع'); return; }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: whFormName.trim(),
       code: whFormCode.trim(),
       location: whFormLocation.trim(),
@@ -150,6 +168,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
       notes: whFormNotes.trim(),
       status: whFormStatus,
     };
+    if (whFormBranchId) payload.branch_id = whFormBranchId;
 
     if (editingWarehouseId) {
       const { error } = await supabase.from('warehouses').update(payload).eq('id', editingWarehouseId);
@@ -206,6 +225,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     const whId = selectedWhForStock || defaultWarehouseId;
     if (whId) {
       updatedStock[productId][whId] = (updatedStock[productId][whId] ?? 0) + 1;
+      await recordInventoryMovement({ productId, warehouseId: whId, movementType: 'adjustment', referenceType: 'warehouse', referenceId: whId, referenceNumber: '', qtyChange: 1 });
       await saveStockData(updatedStock);
     }
   };
@@ -215,7 +235,9 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     if (!updatedStock[productId]) updatedStock[productId] = {};
     const whId = selectedWhForStock || defaultWarehouseId;
     if (whId) {
-      updatedStock[productId][whId] = Math.max(0, (updatedStock[productId][whId] ?? 0) - 1);
+      const current = updatedStock[productId][whId] ?? 0;
+      updatedStock[productId][whId] = Math.max(0, current - 1);
+      await recordInventoryMovement({ productId, warehouseId: whId, movementType: 'adjustment', referenceType: 'warehouse', referenceId: whId, referenceNumber: '', qtyChange: -1 });
       await saveStockData(updatedStock);
     }
   };
@@ -226,6 +248,11 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
     if (!updatedStock[productId]) updatedStock[productId] = {};
     const whId = selectedWhForStock || defaultWarehouseId;
     if (whId) {
+      const oldQty = updatedStock[productId][whId] ?? 0;
+      const diff = numeric - oldQty;
+      if (diff !== 0) {
+        await recordInventoryMovement({ productId, warehouseId: whId, movementType: 'adjustment', referenceType: 'warehouse', referenceId: whId, referenceNumber: '', qtyChange: diff });
+      }
       updatedStock[productId][whId] = numeric;
       await saveStockData(updatedStock);
     }
@@ -330,6 +357,15 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
                         <option value="غير نشط">غير نشط</option>
                       </select>
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 block">الفرع التابع له</label>
+                      <select value={whFormBranchId} onChange={(e) => setWhFormBranchId(e.target.value)} className="w-full border border-slate-300 rounded p-1.5 text-xs bg-white text-right focus:outline-none focus:border-[#0074b1]">
+                        <option value="">(بدون فرع)</option>
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div className="sm:col-span-3 space-y-1">
                       <label className="text-[10px] font-bold text-slate-500 block">ملاحظات</label>
                       <textarea rows={2} value={whFormNotes} onChange={(e) => setWhFormNotes(e.target.value)} className="w-full border border-slate-300 rounded p-1.5 text-xs text-right focus:outline-none focus:border-[#0074b1]" />
@@ -354,6 +390,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
                       <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
                         <th className="p-3">الاسم</th>
                         <th className="p-3">الكود</th>
+                        <th className="p-3">الفرع</th>
                         <th className="p-3">العنوان</th>
                         <th className="p-3">المسؤول</th>
                         <th className="p-3">الحالة</th>
@@ -365,6 +402,7 @@ export default function WarehousesView({ setView }: WarehousesViewProps) {
                         <tr key={wh.id} className="hover:bg-slate-50 transition-colors">
                           <td className="p-3 font-bold text-slate-800">{wh.name}</td>
                           <td className="p-3 font-mono text-slate-500">{wh.code || '—'}</td>
+                          <td className="p-3 text-slate-500">{branches.find(b => b.id === wh.branch_id)?.name || '—'}</td>
                           <td className="p-3 text-slate-500">{wh.location || '—'}</td>
                           <td className="p-3 text-slate-500">{wh.manager || '—'}</td>
                           <td className="p-3">

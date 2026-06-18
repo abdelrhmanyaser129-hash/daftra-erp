@@ -51,7 +51,7 @@ const mapRowToItem = (row: any): BankAccountOrSafe => ({
   withdrawPermission: row.withdraw_permission,
 });
 
-const mapItemToRow = (item: Partial<BankAccountOrSafe>) => ({
+const mapItemToRow = (item: Partial<BankAccountOrSafe>, preserveOpeningBalance = false) => ({
   name: item.name,
   type: item.type,
   bank_name: item.bankName,
@@ -61,6 +61,7 @@ const mapItemToRow = (item: Partial<BankAccountOrSafe>) => ({
   is_main: item.isMain,
   description: item.description,
   balance: item.balance,
+  ...(preserveOpeningBalance ? {} : { opening_balance: item.balance, opening_balance_date: new Date().toISOString().split('T')[0] }),
   deposit_permission: item.depositPermission,
   withdraw_permission: item.withdrawPermission,
 });
@@ -199,9 +200,10 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     };
 
     if (editingItemId) {
+      const currentItem = items.find(i => i.id === editingItemId);
       const { data: updatedData, error } = await supabase
         .from('safes_banks')
-        .update(mapItemToRow(rowData))
+        .update({ ...mapItemToRow(rowData, true), balance: currentItem?.balance ?? initBal })
         .eq('id', editingItemId)
         .select();
       if (error) {
@@ -221,6 +223,20 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
         return;
       }
       const savedBank = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...rowData, id: crypto.randomUUID() } as BankAccountOrSafe;
+      if (insertedData?.[0] && initBal !== 0) {
+        await supabase.from('treasury_transactions').insert({
+          treasury_id: insertedData[0].id,
+          transaction_type: 'opening_balance',
+          reference_type: 'safes_banks',
+          reference_id: insertedData[0].id,
+          reference_number: 'OPENING',
+          description: 'Opening balance',
+          amount: initBal,
+          balance_before: 0,
+          balance_after: initBal,
+          created_by: 'system'
+        });
+      }
       setItems([savedBank, ...items]);
     }
     setEditingItemId(null);
@@ -248,9 +264,10 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
     };
 
     if (editingItemId) {
+      const currentItem = items.find(i => i.id === editingItemId);
       const { data: updatedData, error } = await supabase
         .from('safes_banks')
-        .update(mapItemToRow(rowData))
+        .update({ ...mapItemToRow(rowData, true), balance: currentItem?.balance ?? initBal })
         .eq('id', editingItemId)
         .select();
       if (error) {
@@ -270,6 +287,20 @@ export default function FinanceBankCashSafesView({ setView }: FinanceBankCashSaf
         return;
       }
       const savedSafe = insertedData?.[0] ? mapRowToItem(insertedData[0]) : { ...rowData, id: crypto.randomUUID() } as BankAccountOrSafe;
+      if (insertedData?.[0] && initBal !== 0) {
+        await supabase.from('treasury_transactions').insert({
+          treasury_id: insertedData[0].id,
+          transaction_type: 'opening_balance',
+          reference_type: 'safes_banks',
+          reference_id: insertedData[0].id,
+          reference_number: 'OPENING',
+          description: 'Opening balance',
+          amount: initBal,
+          balance_before: 0,
+          balance_after: initBal,
+          created_by: 'system'
+        });
+      }
       setItems([savedSafe, ...items]);
     }
     setEditingItemId(null);

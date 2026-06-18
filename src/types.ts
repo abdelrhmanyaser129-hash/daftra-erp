@@ -14,7 +14,7 @@ export interface InvoiceItem {
   total: number;
 }
 
-export type InvoiceStatus = 'draft' | 'paid' | 'unpaid' | 'overdue' | 'partial';
+export type InvoiceStatus = 'draft' | 'paid' | 'unpaid' | 'overdue' | 'partial' | 'returned' | 'partially_returned';
 
 export interface Invoice {
   id: string;
@@ -85,6 +85,29 @@ export interface WeightRecord {
   date: string;
   weight: number;
   notes: string;
+}
+
+export interface Branch {
+  id: string;
+  name: string;
+  code: string;
+  location: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ProductCategory {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+}
+
+export interface ProductBrand {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
 }
 
 export interface UserPermissions {

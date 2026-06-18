@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import { 
   Plus, 
   ChevronLeft, 
@@ -85,7 +86,8 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
   const [newVoucherNo, setNewVoucherNo] = useState<string>('');
   const [newType, setNewType] = useState<'إذن إضافة' | 'إذن صرف'>('إذن إضافة');
   const [newSource, setNewSource] = useState<string>('يدوي');
-  const [newBranch, setNewBranch] = useState<string>('الفرع الرئيسي');
+  const [branchesList, setBranchesList] = useState<{ id: string; name: string }[]>([]);
+  const [newBranch, setNewBranch] = useState<string>('');
   const [newIdentifier, setNewIdentifier] = useState<string>('');
   const [newWarehouse, setNewWarehouse] = useState<string>('المستودع الرئيسي');
   const [newClientName, setNewClientName] = useState<string>('أي عميل');
@@ -137,6 +139,15 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
     supabase.from('warehouses').select('id, name').then(({ data }) => {
       if (data) setWarehousesList(data);
       else setWarehousesList([]);
+    });
+
+    supabase.from('branches').select('id, name').order('name').then(({ data }) => {
+      if (data) {
+        setBranchesList(data);
+        if (data.length > 0) {
+          setNewBranch(data[0].name);
+        }
+      }
     });
 
     supabase.from('inventory_vouchers').select('*').order('created_at', { ascending: false }).then(({ data }) => {
@@ -211,7 +222,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
     setNewVoucherNo(`INV-STK-${String(nextNo).padStart(5, '0')}`);
     setNewType('إذن إضافة');
     setNewSource('يدوي');
-    setNewBranch('الفرع الرئيسي');
+    setNewBranch(branchesList.length > 0 ? branchesList[0].name : '');
     setNewIdentifier('');
     setNewWarehouse('المستودع الرئيسي');
     setNewClientName('أي عميل');
@@ -295,39 +306,7 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
         for (const vi of voucherItems) {
           if (!vi.productId) continue;
           const qtyChange = newType === 'إذن إضافة' ? vi.quantity : -vi.quantity;
-
-          const { data: stock } = await supabase
-            .from('warehouse_stock')
-            .select('quantity')
-            .eq('product_id', vi.productId)
-            .eq('warehouse_id', matchedWarehouse.id)
-            .maybeSingle();
-
-          const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
-          const qtyAfter = qtyBefore + qtyChange;
-
-          await supabase
-            .from('warehouse_stock')
-            .upsert({
-              product_id: vi.productId,
-              warehouse_id: matchedWarehouse.id,
-              quantity: qtyAfter
-            }, { onConflict: 'product_id,warehouse_id' });
-
-          await supabase
-            .from('inventory_movements')
-            .insert({
-              product_id: vi.productId,
-              warehouse_id: matchedWarehouse.id,
-              movement_type: 'adjustment',
-              reference_type: 'inventory_voucher',
-              reference_id: inserted.id,
-              reference_number: inserted.voucher_number,
-              qty_before: qtyBefore,
-              qty_change: qtyChange,
-              qty_after: qtyAfter,
-              created_by: newAddedBy
-            });
+          await recordInventoryMovement({ productId: vi.productId, warehouseId: matchedWarehouse.id, movementType: 'adjustment', referenceType: 'inventory_voucher', referenceId: inserted.id, referenceNumber: inserted.voucher_number, qtyChange, createdBy: newAddedBy });
         }
       }
     }
@@ -453,9 +432,10 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
                       onChange={(e) => setNewBranch(e.target.value)}
                       className="w-full border border-slate-300 rounded p-1.5 text-xs bg-white text-right focus:outline-none focus:border-[#0074b1]"
                     >
-                      <option value="الفرع الرئيسي">الفرع الرئيسي</option>
-                      <option value="فرع الرياض والمنطقة الوسطى">فرع الرياض</option>
-                      <option value="فرع جدة والمنطقة الغربية">فرع جدة</option>
+                      {branchesList.length === 0 && <option value="">(لا توجد فروع)</option>}
+                      {branchesList.map(b => (
+                        <option key={b.id} value={b.name}>{b.name}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -797,9 +777,9 @@ export default function InventoryVouchersView({ setView }: InventoryVouchersView
                 className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs text-slate-600 bg-white focus:outline-none focus:border-[#0074b1] transition-all text-right shadow-2xs"
               >
                 <option value="الكل">الكل</option>
-                <option value="الفرع الرئيسي">الفرع الرئيسي</option>
-                <option value="فرع الرياض والمنطقة الوسطى">فرع الرياض</option>
-                <option value="فرع جدة والمنطقة الغربية">فرع جدة</option>
+                {branchesList.map(b => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
               </select>
             </div>
 

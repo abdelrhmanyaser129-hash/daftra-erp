@@ -13,6 +13,13 @@ import {
   Search
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
+import {
+  addTreasuryTransaction,
+  getInvoiceNumber,
+  refreshClientBalance,
+  refreshInvoiceFinancials
+} from '../lib/financialCore';
 
 interface ReturnedInvoicesViewProps {
   setView: (view: string) => void;
@@ -53,11 +60,11 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
     if (wh) setWarehouses(wh);
     const { data: sb } = await supabase.from('safes_banks').select('id, name, type');
     if (sb) setSafesBanks(sb);
-    const { data: ri } = await supabase.from('returned_invoices').select('*').order('created_at', { ascending: false });
+    const { data: ri } = await supabase.from('returned_invoices').select('*, invoices(invoice_number)').order('created_at', { ascending: false });
     if (ri) {
       setReturnedInvoices(ri.map((r: any) => ({
         id: r.id,
-        invoiceNumber: r.invoice_id || '',
+        invoiceNumber: r.invoices?.invoice_number || r.invoice_number || r.invoice_id || '',
         returnNumber: r.return_number,
         clientName: r.client_name,
         date: r.date,
@@ -118,7 +125,7 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [showProductDropdown, setShowProductDropdown] = useState<Record<string, boolean>>({});
 
-  const paidInvoices = invoices.filter(inv => inv.status === 'paid' || inv.status === 'unpaid');
+  const paidInvoices = invoices.filter(inv => ['paid', 'partial', 'unpaid'].includes(inv.status));
 
   const handleClearFilters = () => {
     setClientFilter('any');
@@ -204,50 +211,6 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
     setShowProductDropdown(prev => ({ ...prev, [itemId]: false }));
   };
 
-  const recordInventoryMovement = async (
-    productId: string,
-    warehouseId: string,
-    movementType: string,
-    referenceType: string,
-    referenceId: string,
-    referenceNumber: string,
-    qtyChange: number,
-    createdBy: string
-  ) => {
-    const { data: stock } = await supabase
-      .from('warehouse_stock')
-      .select('quantity')
-      .eq('product_id', productId)
-      .eq('warehouse_id', warehouseId)
-      .maybeSingle();
-
-    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
-    const qtyAfter = qtyBefore + qtyChange;
-
-    await supabase
-      .from('warehouse_stock')
-      .upsert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        quantity: qtyAfter
-      }, { onConflict: 'product_id,warehouse_id' });
-
-    await supabase
-      .from('inventory_movements')
-      .insert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        movement_type: movementType,
-        reference_type: referenceType,
-        reference_id: referenceId,
-        reference_number: referenceNumber,
-        qty_before: qtyBefore,
-        qty_change: qtyChange,
-        qty_after: qtyAfter,
-        created_by: createdBy
-      });
-  };
-
   const handleAddReturn = async () => {
     if (!selectedInvoiceId) {
       showToast?.('الرجاء اختيار الفاتورة المراد إرجاعها.', 'error');
@@ -274,14 +237,12 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
     }
 
     const returnNumber = getNextReturnNumber();
-    const returnId = `ret-${Date.now()}`;
 
     const totalReturnValue = returnItemsWithProduct.reduce((sum, item) => sum + (item.unitPrice * item.returnQty), 0);
 
     const isFullReturn = totalReturnValue >= invoice.total;
 
-    await supabase.from('returned_invoices').insert({
-      id: returnId,
+    const { data: savedReturn, error: returnError } = await supabase.from('returned_invoices').insert({
       return_number: returnNumber,
       invoice_id: selectedInvoiceId,
       client_id: invoice.client_id || null,
@@ -292,60 +253,45 @@ export default function ReturnedInvoicesView({ setView, showToast }: ReturnedInv
       status: isFullReturn ? 'refunded' : 'partially-refunded',
       notes: returnReason,
       warehouse_id: selectedWarehouseId,
-      treasury_id: doRefund ? selectedTreasuryId : null
-    });
+      treasury_id: doRefund ? selectedTreasuryId : null,
+      payment_method: doRefund ? paymentMethod : ''
+    }).select().single();
+    if (returnError || !savedReturn) {
+      showToast?.(returnError?.message || 'فشل حفظ مرتجع المبيعات.', 'error');
+      return;
+    }
+
+    const returnId = savedReturn.id;
 
     for (const item of returnItemsWithProduct) {
-      await recordInventoryMovement(
-        item.productId,
-        selectedWarehouseId,
-        'sale_return',
-        'returned_invoice',
-        returnId,
-        returnNumber,
-        item.returnQty,
-        'Abdo Yaser'
-      );
+      await recordInventoryMovement({ productId: item.productId, warehouseId: selectedWarehouseId, movementType: 'sale_return', referenceType: 'returned_invoice', referenceId: returnId, referenceNumber: returnNumber, qtyChange: item.returnQty, createdBy: 'Abdo Yaser' });
     }
 
     if (doRefund && selectedTreasuryId && totalReturnValue > 0) {
-      const { data: treasury } = await supabase
-        .from('safes_banks')
-        .select('balance')
-        .eq('id', selectedTreasuryId)
-        .single();
-
-      const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
-      const newBalance = currentBalance - totalReturnValue;
-
-      await supabase
-        .from('safes_banks')
-        .update({ balance: newBalance })
-        .eq('id', selectedTreasuryId);
-
-      await supabase.from('treasury_transactions').insert({
-        treasury_id: selectedTreasuryId,
-        transaction_type: 'payment_voucher',
-        reference_type: 'returned_invoice',
-        reference_id: returnId,
-        reference_number: returnNumber,
-        description: `رد قيمة مرتجع مبيعات ${returnNumber} للفاتورة #${invoice.invoiceNumber}`,
+      await addTreasuryTransaction({
+        treasuryId: selectedTreasuryId,
+        transactionType: 'sales_return_refund',
+        referenceType: 'returned_invoice',
+        referenceId: returnId,
+        referenceNumber: returnNumber,
+        description: `Sales return refund ${returnNumber} for invoice ${getInvoiceNumber(invoice)}`,
         amount: totalReturnValue,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        created_by: 'Abdo Yaser'
+        direction: 'out',
+        createdBy: 'Abdo Yaser'
       });
     }
 
-    await supabase.from('invoices').update({ status: 'returned' }).eq('id', selectedInvoiceId);
+
+    const financials = await refreshInvoiceFinancials(selectedInvoiceId);
+    await refreshClientBalance(invoice.client_id);
 
     setInvoices(prev => prev.map(inv =>
-      inv.id === selectedInvoiceId ? { ...inv, status: 'returned', alreadyPaid: false } : inv
+      inv.id === selectedInvoiceId ? { ...inv, status: financials.status, alreadyPaid: financials.status === 'paid' } : inv
     ));
 
     const returned: ReturnedInvoice = {
       id: returnId,
-      invoiceNumber: invoice.invoiceNumber,
+      invoiceNumber: getInvoiceNumber(invoice),
       returnNumber,
       clientName: invoice.clientName || invoice.client_name || '',
       date: returnDate,

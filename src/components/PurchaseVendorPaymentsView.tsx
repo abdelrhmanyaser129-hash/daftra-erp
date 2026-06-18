@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search,
@@ -159,6 +160,10 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
   const [searchIdentifier, setSearchIdentifier] = useState('');
   const [searchCreator, setSearchCreator] = useState('all');
 
+  // Treasury / Safes Banks
+  const [safesBanks, setSafesBanks] = useState<{ id: string; name: string; type: string; balance: number }[]>([]);
+  const [selectedTreasuryId, setSelectedTreasuryId] = useState('');
+
   // --- Add Payment Form State ---
   const [newVendorId, setNewVendorId] = useState('');
   const [newInvoiceNumber, setNewInvoiceNumber] = useState('');
@@ -185,6 +190,12 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
       if (vendorsResult.data) setVendors(vendorsResult.data.map(mapRowToVendor));
       if (invoicesResult.data) setInvoices(invoicesResult.data.map(mapRowToInvoice));
       if (paymentsResult.data) setPayments(paymentsResult.data.map(mapRowToPayment));
+
+      const { data: safesData } = await supabase
+        .from('safes_banks')
+        .select('id, name, type, balance')
+        .eq('status', 'active');
+      if (safesData) setSafesBanks(safesData);
     };
     loadData();
   }, [currentMode]);
@@ -249,6 +260,8 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
       if (invObj) vendorName = invObj.vendorName;
     }
 
+    const finalAmount = Number(newAmount);
+
     const newPayment: PurchasePayment = {
       id: '',
       paymentNumber: newPaymentNumber || generateNextPaymentNumber(),
@@ -256,7 +269,7 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
       vendorId: newVendorId,
       vendorName: vendorName,
       paymentMethod: newPaymentMethod,
-      amount: Number(newAmount),
+      amount: finalAmount,
       paymentDate: newPaymentDate,
       createdDate: new Date().toISOString().split('T')[0],
       status: 'Approved',
@@ -267,7 +280,10 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
 
     const { data, error } = await supabase
       .from('purchase_vendor_payments')
-      .insert([mapPaymentToRow(newPayment)])
+      .insert([{
+        ...mapPaymentToRow(newPayment),
+        treasury_id: selectedTreasuryId || null,
+      }])
       .select()
       .single();
 
@@ -279,6 +295,46 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
 
     if (data) {
       setPayments(prev => [mapRowToPayment(data), ...prev]);
+    }
+
+    // Reduce vendor balance
+    if (newVendorId) {
+      const { data: vBalData } = await supabase
+        .from('purchase_vendors')
+        .select('balance')
+        .eq('id', newVendorId)
+        .single();
+      const vendorBal = Number(vBalData?.balance || 0);
+      await supabase
+        .from('purchase_vendors')
+        .update({ balance: Math.max(0, vendorBal - finalAmount) })
+        .eq('id', newVendorId);
+    }
+
+    // Deduct from treasury
+    if (selectedTreasuryId && finalAmount > 0) {
+      const { data: treasury } = await supabase
+        .from('safes_banks')
+        .select('balance')
+        .eq('id', selectedTreasuryId)
+        .single();
+      if (treasury) {
+        const balBefore = Number(treasury.balance) || 0;
+        const balAfter = balBefore - finalAmount;
+        await supabase.from('safes_banks').update({ balance: balAfter }).eq('id', selectedTreasuryId);
+        await supabase.from('treasury_transactions').insert({
+          treasury_id: selectedTreasuryId,
+          transaction_type: 'vendor_payment',
+          reference_type: 'purchase_vendor_payment',
+          reference_id: data?.id || '',
+          reference_number: newPaymentNumber,
+          description: `دفعة للمورد ${vendorName} بقيمة ${finalAmount}`,
+          amount: finalAmount,
+          balance_before: balBefore,
+          balance_after: balAfter,
+          created_by: 'system',
+        });
+      }
     }
 
     if (newInvoiceNumber && invoices.length > 0) {
@@ -294,6 +350,58 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
   const handleDeletePayment = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('هل أنت متأكد من حذف عملية دفع المورد هذه نهائياً؟')) return;
+
+    const { data: paymentData } = await supabase
+      .from('purchase_vendor_payments')
+      .select('amount, vendor_id, treasury_id, payment_number')
+      .eq('id', id)
+      .single();
+
+    // Reverse vendor balance
+    if (paymentData && paymentData.vendor_id && paymentData.amount) {
+      const amt = Number(paymentData.amount) || 0;
+      if (amt > 0) {
+        const { data: vBalData } = await supabase
+          .from('purchase_vendors')
+          .select('balance')
+          .eq('id', paymentData.vendor_id)
+          .single();
+        const vendorBal = Number(vBalData?.balance || 0);
+        await supabase
+          .from('purchase_vendors')
+          .update({ balance: vendorBal + amt })
+          .eq('id', paymentData.vendor_id);
+      }
+    }
+
+    // Reverse treasury deduction
+    if (paymentData && paymentData.treasury_id && paymentData.amount) {
+      const amt = Number(paymentData.amount) || 0;
+      if (amt > 0) {
+        const { data: treasury } = await supabase
+          .from('safes_banks')
+          .select('balance')
+          .eq('id', paymentData.treasury_id)
+          .single();
+        if (treasury) {
+          const balBefore = Number(treasury.balance) || 0;
+          const balAfter = balBefore + amt;
+          await supabase.from('safes_banks').update({ balance: balAfter }).eq('id', paymentData.treasury_id);
+          await supabase.from('treasury_transactions').insert({
+            treasury_id: paymentData.treasury_id,
+            transaction_type: 'vendor_payment_reversal',
+            reference_type: 'purchase_vendor_payment_deleted',
+            reference_id: id,
+            reference_number: paymentData.payment_number,
+            description: `إلغاء دفعة مورد #${paymentData.payment_number}`,
+            amount: amt,
+            balance_before: balBefore,
+            balance_after: balAfter,
+            created_by: 'system',
+          });
+        }
+      }
+    }
 
     const { error } = await supabase
       .from('purchase_vendor_payments')
@@ -998,7 +1106,22 @@ export default function PurchaseVendorPaymentsView({ setView }: PurchaseVendorPa
                   </select>
                 </div>
 
-                {/* 7. Reference check ID */}
+                {/* 7. Treasury / Safe selection */}
+                <div className="space-y-1.5 text-right">
+                  <label className="font-black text-slate-600 block">الخزينة / الحساب البنكي</label>
+                  <select
+                    value={selectedTreasuryId}
+                    onChange={(e) => setSelectedTreasuryId(e.target.value)}
+                    className="w-full text-right p-2.5 bg-white border border-slate-200 rounded text-xs font-bold outline-none"
+                  >
+                    <option value="">(اختر الخزينة)</option>
+                    {safesBanks.map(sb => (
+                      <option key={sb.id} value={sb.id}>{sb.name} ({sb.type === 'safe' ? 'خزينة' : 'بنك'} - الرصيد: {sb.balance})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 8. Reference check ID */}
                 <div className="space-y-1.5 text-right">
                   <label className="font-black text-slate-600 block">المعرف الفريد المرجعي لعملية الانتقال</label>
                   <input

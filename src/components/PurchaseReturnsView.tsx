@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Plus,
@@ -359,50 +360,6 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
     setProductSearchQuery('');
   };
 
-  const recordInventoryMovement = async (
-    productId: string,
-    warehouseId: string,
-    movementType: string,
-    referenceType: string,
-    referenceId: string,
-    referenceNumber: string,
-    qtyChange: number,
-    createdBy: string
-  ) => {
-    const { data: stock } = await supabase
-      .from('warehouse_stock')
-      .select('quantity')
-      .eq('product_id', productId)
-      .eq('warehouse_id', warehouseId)
-      .maybeSingle();
-
-    const qtyBefore = stock ? parseFloat(stock.quantity) : 0;
-    const qtyAfter = qtyBefore + qtyChange;
-
-    await supabase
-      .from('warehouse_stock')
-      .upsert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        quantity: qtyAfter
-      }, { onConflict: 'product_id,warehouse_id' });
-
-    await supabase
-      .from('inventory_movements')
-      .insert({
-        product_id: productId,
-        warehouse_id: warehouseId,
-        movement_type: movementType,
-        reference_type: referenceType,
-        reference_id: referenceId,
-        reference_number: referenceNumber,
-        qty_before: qtyBefore,
-        qty_change: qtyChange,
-        qty_after: qtyAfter,
-        created_by: createdBy
-      });
-  };
-
   // Quick Vendor Addition inside form
   const handleAddQuickVendor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -515,21 +472,24 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
         for (const item of finalItems) {
           const matchedProduct = products.find((p: any) => p.name === item.itemName);
           if (matchedProduct) {
-            await recordInventoryMovement(
-              matchedProduct.id,
-              selectedWarehouseId,
-              'purchase_return',
-              'purchase_return',
-              data.id,
-              data.return_number,
-              -item.quantity,
-              'أبو ياسر #000001'
-            );
+            await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: selectedWarehouseId, movementType: 'purchase_return', referenceType: 'purchase_return', referenceId: data.id, referenceNumber: data.return_number, qtyChange: -item.quantity, createdBy: 'أبو ياسر #000001' });
           }
         }
       }
 
-      // Record treasury transaction if already paid
+      // Update vendor balance (reduces amount owed to supplier)
+      const { data: vBalData } = await supabase
+        .from('purchase_vendors')
+        .select('balance')
+        .eq('id', vendor.id)
+        .single();
+      const vendorBal = Number(vBalData?.balance || 0);
+      await supabase
+        .from('purchase_vendors')
+        .update({ balance: Math.max(0, vendorBal - calculatedGrandTotal) })
+        .eq('id', vendor.id);
+
+      // Record treasury refund if already paid (supplier refunds the company)
       if (alreadyPaid && selectedTreasuryId && calculatedGrandTotal > 0) {
         const { data: treasury } = await supabase
           .from('safes_banks')
@@ -538,7 +498,7 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
           .single();
 
         const currentBalance = treasury ? parseFloat(treasury.balance) : 0;
-        const newBalance = currentBalance - calculatedGrandTotal;
+        const newBalance = currentBalance + calculatedGrandTotal;
 
         await supabase
           .from('safes_banks')
@@ -547,11 +507,11 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
 
         await supabase.from('treasury_transactions').insert({
           treasury_id: selectedTreasuryId,
-          transaction_type: 'payment_voucher',
+          transaction_type: 'purchase_return_refund',
           reference_type: 'purchase_return',
           reference_id: data.id,
           reference_number: data.return_number,
-          description: `رد قيمة مرتجع مشتريات ${data.return_number} للمورد ${vendor.name}`,
+          description: `استرداد قيمة مرتجع مشتريات #${data.return_number} من المورد ${vendor.name}`,
           amount: calculatedGrandTotal,
           balance_before: currentBalance,
           balance_after: newBalance,
@@ -567,6 +527,68 @@ export default function PurchaseReturnsView({ setView }: PurchaseReturnsViewProp
   const handleDeleteReturn = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('هل أنت متأكد من رغبتك في حذف مرتجع المشتريات هذا نهائياً؟')) {
+      const { data: retData } = await supabase
+        .from('purchase_returns')
+        .select('items, return_number, warehouse_id, total, vendor_id, already_paid, treasury_id')
+        .eq('id', id)
+        .single();
+
+      // Revert inventory (add stock back)
+      if (retData && retData.warehouse_id) {
+        for (const item of (retData.items || [])) {
+          const matchedProduct = products.find((p: any) => p.name === item.itemName);
+          if (matchedProduct) {
+            await recordInventoryMovement({ productId: matchedProduct.id, warehouseId: retData.warehouse_id, movementType: 'purchase_return', referenceType: 'purchase_return_deleted', referenceId: id, referenceNumber: retData.return_number, qtyChange: item.quantity, createdBy: 'system' });
+          }
+        }
+      }
+
+      // Revert vendor balance (add back what was subtracted)
+      if (retData && retData.vendor_id && retData.total) {
+        const retTotal = Number(retData.total) || 0;
+        if (retTotal > 0) {
+          const { data: vBalData } = await supabase
+            .from('purchase_vendors')
+            .select('balance')
+            .eq('id', retData.vendor_id)
+            .single();
+          const vendorBal = Number(vBalData?.balance || 0);
+          await supabase
+            .from('purchase_vendors')
+            .update({ balance: vendorBal + retTotal })
+            .eq('id', retData.vendor_id);
+        }
+      }
+
+      // Revert treasury refund
+      if (retData && retData.already_paid && retData.treasury_id && retData.total) {
+        const retTotal = Number(retData.total) || 0;
+        if (retTotal > 0) {
+          const { data: treasury } = await supabase
+            .from('safes_banks')
+            .select('balance')
+            .eq('id', retData.treasury_id)
+            .single();
+          if (treasury) {
+            const balBefore = Number(treasury.balance) || 0;
+            const balAfter = balBefore - retTotal;
+            await supabase.from('safes_banks').update({ balance: balAfter }).eq('id', retData.treasury_id);
+            await supabase.from('treasury_transactions').insert({
+              treasury_id: retData.treasury_id,
+              transaction_type: 'purchase_return_refund_reversal',
+              reference_type: 'purchase_return_deleted',
+              reference_id: id,
+              reference_number: retData.return_number,
+              description: `إلغاء استرداد مرتجع مشتريات #${retData.return_number}`,
+              amount: retTotal,
+              balance_before: balBefore,
+              balance_after: balAfter,
+              created_by: 'system',
+            });
+          }
+        }
+      }
+
       const { error } = await supabase.from('purchase_returns').delete().eq('id', id);
       if (error) {
         console.error("Failed to delete purchase return", error);

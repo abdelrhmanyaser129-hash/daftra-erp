@@ -29,6 +29,7 @@ interface Product {
   price: number;
   cost?: number;
   stockQty?: number;
+  purchase_price?: number;
 }
 
 interface UnifiedReportsViewProps {
@@ -73,8 +74,9 @@ function mapProduct(row: any): Product {
     id: row.id,
     name: row.name || '',
     price: row.price || 0,
-    cost: row.cost,
+    cost: row.cost || Number(row.purchase_price) || 0,
     stockQty: row.quantity || row.stock_qty || 0,
+    purchase_price: Number(row.purchase_price) || 0,
   };
 }
 
@@ -106,7 +108,61 @@ function ReportPage({ reportType, onBack, invoices, clients, products }: {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const rowsPerPage = 10;
 
+  // Transaction data for real reports
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
+  const [purchases, setPurchases] = useState<any[]>([]);
+  const [stockData, setStockData] = useState<any[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<any[]>([]);
+  const [saleReturns, setSaleReturns] = useState<any[]>([]);
+
   useEffect(() => { setLocals(invoices); }, [invoices]);
+
+  useEffect(() => {
+    switch (reportType) {
+      case 'expenses':
+        supabase.from('finance_expenses').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setExpenses(data);
+        });
+        break;
+      case 'payments':
+        supabase.from('customer_payments').select('*').order('created_at', { ascending: false }).then(({ data }) => {
+          if (data) setPayments(data);
+        });
+        break;
+      case 'purchases':
+        Promise.all([
+          supabase.from('purchase_invoices').select('*').order('created_at', { ascending: false }),
+          supabase.from('purchase_returns').select('*').order('created_at', { ascending: false }),
+        ]).then(([invRes, retRes]) => {
+          if (invRes.data) setPurchases(invRes.data);
+          if (retRes.data) setPurchaseReturns(retRes.data);
+        });
+        break;
+      case 'inventory':
+      case 'products':
+        supabase.from('warehouse_stock').select('product_id, warehouse_id, quantity, opening_stock').then(({ data }) => {
+          if (data) setStockData(data);
+        });
+        break;
+      case 'pnl':
+      case 'financial':
+        Promise.all([
+          supabase.from('finance_expenses').select('*'),
+          supabase.from('customer_payments').select('*'),
+          supabase.from('returned_invoices').select('*'),
+          supabase.from('purchase_invoices').select('*'),
+          supabase.from('warehouse_stock').select('product_id, quantity'),
+        ]).then(([expRes, payRes, retRes, purRes, stkRes]) => {
+          if (expRes.data) setExpenses(expRes.data);
+          if (payRes.data) setPayments(payRes.data);
+          if (retRes.data) setSaleReturns(retRes.data);
+          if (purRes.data) setPurchases(purRes.data);
+          if (stkRes.data) setStockData(stkRes.data);
+        });
+        break;
+    }
+  }, [reportType]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!confirm('هل أنت متأكد من حذف هذه الفاتورة؟')) return;
@@ -180,56 +236,82 @@ function ReportPage({ reportType, onBack, invoices, clients, products }: {
         ];
       }
       case 'products': {
-        const totalQty = products.reduce((s, p) => s + (p.stockQty || 0), 0);
+        const totalQty = stockData.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
         return [
           { label: 'عدد المنتجات', value: `${products.length}` },
-          { label: 'إجمالي الوحدات', value: `${totalQty}` },
+          { label: 'إجمالي الوحدات في المخزون', value: `${totalQty}` },
         ];
       }
       case 'inventory': {
-        const val = products.reduce((s, p) => s + (p.cost || p.price * 0.7) * (p.stockQty || 0), 0);
-        const low = products.filter(p => (p.stockQty || 0) <= 3).length;
+        const prodMap = new Map(products.map(p => [p.id, p]));
+        const totalValue = stockData.reduce((s, r) => {
+          const prod = prodMap.get(r.product_id);
+          const qty = Number(r.quantity) || 0;
+          const cost = prod?.cost || Number((prod as any)?.purchase_price) || 0;
+          return s + cost * qty;
+        }, 0);
+        const totalQty = stockData.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
         return [
-          { label: 'قيمة المخزون', value: `${val.toLocaleString()} ج.م` },
-          { label: 'منخفضة', value: `${low}` },
+          { label: 'قيمة المخزون (سعر الشراء)', value: `${totalValue.toLocaleString()} ج.م` },
+          { label: 'إجمالي الوحدات', value: `${totalQty}` },
+          { label: 'عدد المنتجات', value: `${products.length}` },
         ];
       }
       case 'expenses': {
-        const cost = locals.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
+        const total = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        const count = expenses.length;
         return [
-          { label: 'إجمالي التكاليف', value: `${cost.toLocaleString()} ج.م` },
-          { label: 'مصروفات تقديرية', value: `${(cost * 0.15).toLocaleString()} ج.م` },
+          { label: 'إجمالي المصروفات', value: `${total.toLocaleString()} ج.م` },
+          { label: 'عدد المعاملات', value: `${count}` },
+        ];
+      }
+      case 'purchases': {
+        const total = purchases.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        const retTotal = purchaseReturns.reduce((s, r) => s + (Number(r.total) || 0), 0);
+        return [
+          { label: 'إجمالي المشتريات', value: `${total.toLocaleString()} ج.م` },
+          { label: 'إجمالي المرتجعات', value: `${retTotal.toLocaleString()} ج.م` },
+          { label: 'صافي المشتريات', value: `${(total - retTotal).toLocaleString()} ج.م` },
+          { label: 'عدد فواتير الشراء', value: `${purchases.length}` },
         ];
       }
       case 'pnl': {
         const revenue = locals.reduce((s, i) => s + i.total, 0);
-        const cost = locals.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
+        const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        const purchaseTotal = purchases.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        const retTotal = saleReturns.reduce((s, r) => s + (Number(r.total) || 0), 0);
+        const netRevenue = revenue - retTotal;
+        const totalCosts = purchaseTotal + expenseTotal;
         return [
-          { label: 'الإيرادات', value: `${revenue.toLocaleString()} ج.م` },
-          { label: 'التكاليف', value: `${cost.toLocaleString()} ج.م` },
-          { label: 'صافي الربح', value: `${Math.max(0, revenue - cost).toLocaleString()} ج.م` },
+          { label: 'الإيرادات (فواتير البيع)', value: `${netRevenue.toLocaleString()} ج.م` },
+          { label: 'تكلفة المشتريات', value: `${purchaseTotal.toLocaleString()} ج.م` },
+          { label: 'المصروفات', value: `${expenseTotal.toLocaleString()} ج.م` },
+          { label: 'صافي الربح / الخسارة', value: `${(netRevenue - totalCosts).toLocaleString()} ج.م` },
         ];
       }
       case 'payments': {
-        const paid = locals.filter(i => i.status === 'paid');
-        const totalPaid = paid.reduce((s, i) => s + i.total, 0);
+        const totalCollected = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
         return [
-          { label: 'المدفوعات المستلمة', value: `${totalPaid.toLocaleString()} ج.م` },
-          { label: 'عدد المعاملات', value: `${paid.length}` },
+          { label: 'إجمالي المدفوعات المستلمة', value: `${totalCollected.toLocaleString()} ج.م` },
+          { label: 'عدد المعاملات', value: `${payments.length}` },
         ];
       }
       case 'financial': {
         const revenue = locals.reduce((s, i) => s + i.total, 0);
-        const cost = locals.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
+        const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+        const purchaseTotal = purchases.reduce((s, p) => s + (Number(p.total) || 0), 0);
+        const collected = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const stockValue = stockData.reduce((s, r) => s + (Number(r.quantity) || 0) * 1, 0);
         return [
-          { label: 'إجمالي الأصول', value: `${revenue.toLocaleString()} ج.م` },
-          { label: 'إجمالي الالتزامات', value: `${cost.toLocaleString()} ج.م` },
-          { label: 'حقوق الملكية', value: `${Math.max(0, revenue - cost).toLocaleString()} ج.م` },
+          { label: 'إجمالي الإيرادات (فواتير البيع)', value: `${revenue.toLocaleString()} ج.م` },
+          { label: 'إجمالي المدفوعات المحصلة', value: `${collected.toLocaleString()} ج.م` },
+          { label: 'إجمالي المصروفات', value: `${expenseTotal.toLocaleString()} ج.م` },
+          { label: 'إجمالي المشتريات', value: `${purchaseTotal.toLocaleString()} ج.م` },
         ];
       }
       default: return [];
     }
-  }, [reportType, locals, clients, products]);
+  }, [reportType, locals, clients, products, expenses, payments, purchases, stockData, purchaseReturns, saleReturns]);
 
   const statusBadge = (status: string) => {
     const colors: Record<string, string> = {
@@ -400,15 +482,30 @@ export default function UnifiedReportsView({ setView }: UnifiedReportsViewProps)
   const [activeReport, setActiveReport] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [expensesTotals, setExpensesTotals] = useState(0);
+  const [paymentsTotals, setPaymentsTotals] = useState(0);
+  const [stockSummary, setStockSummary] = useState<{ qty: number; value: number }>({ qty: 0, value: 0 });
+
   useEffect(() => {
     Promise.all([
       supabase.from('invoices').select('*').order('created_at', { ascending: false }),
       supabase.from('clients').select('id,full_name'),
       supabase.from('products').select('*'),
-    ]).then(([invRes, clRes, prodRes]) => {
+      supabase.from('finance_expenses').select('amount'),
+      supabase.from('customer_payments').select('amount'),
+      supabase.from('warehouse_stock').select('product_id, quantity, opening_stock'),
+    ]).then(([invRes, clRes, prodRes, expRes, payRes, stkRes]) => {
       if (invRes.data) setInvoices(invRes.data.map(mapInvoice));
       if (clRes.data) setClients(clRes.data);
       if (prodRes.data) setProducts(prodRes.data.map(mapProduct));
+      if (expRes.data) setExpensesTotals(expRes.data.reduce((s: number, e: any) => s + (Number(e.amount) || 0), 0));
+      if (payRes.data) setPaymentsTotals(payRes.data.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0));
+      if (stkRes.data && prodRes.data) {
+        const prodMap = new Map(prodRes.data.map((p: any) => [p.id, Number(p.purchase_price) || 0]));
+        const qty = stkRes.data.reduce((s: number, r: any) => s + (Number(r.quantity) || 0), 0);
+        const val = stkRes.data.reduce((s: number, r: any) => s + (Number(r.quantity) || 0) * (prodMap.get(r.product_id) || 0), 0);
+        setStockSummary({ qty, value: val });
+      }
       setLoading(false);
     });
   }, []);
@@ -478,49 +575,42 @@ export default function UnifiedReportsView({ setView }: UnifiedReportsViewProps)
         { label: 'إجمالي العملاء', value: `${clients.length}` },
       ];
       case 'products': {
-        const totalQty = products.reduce((s, p) => s + (p.stockQty || 0), 0);
         return [
           { label: 'عدد المنتجات', value: `${products.length}` },
-          { label: 'إجمالي الوحدات', value: `${totalQty}` },
+          { label: 'إجمالي الوحدات في المخزون', value: `${stockSummary.qty}` },
         ];
       }
       case 'inventory': {
-        const val = products.reduce((s, p) => s + (p.cost || p.price * 0.7) * (p.stockQty || 0), 0);
-        const low = products.filter(p => (p.stockQty || 0) <= 3).length;
         return [
-          { label: 'قيمة المخزون', value: `${val.toLocaleString()} ج.م` },
-          { label: 'منخفضة', value: `${low}` },
+          { label: 'قيمة المخزون (سعر الشراء)', value: `${stockSummary.value.toLocaleString()} ج.م` },
+          { label: 'إجمالي الوحدات', value: `${stockSummary.qty}` },
+          { label: 'عدد المنتجات', value: `${products.length}` },
         ];
       }
       case 'expenses': {
-        const cost = invoices.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
         return [
-          { label: 'إجمالي التكاليف', value: `${cost.toLocaleString()} ج.م` },
-          { label: 'مصروفات تقديرية', value: `${(cost * 0.15).toLocaleString()} ج.م` },
+          { label: 'إجمالي المصروفات', value: `${expensesTotals.toLocaleString()} ج.م` },
         ];
       }
       case 'pnl': {
         const revenue = invoices.reduce((s, i) => s + i.total, 0);
-        const cost = invoices.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
         return [
-          { label: 'الإيرادات', value: `${revenue.toLocaleString()} ج.م` },
-          { label: 'التكاليف', value: `${cost.toLocaleString()} ج.م` },
-          { label: 'صافي الربح', value: `${Math.max(0, revenue - cost).toLocaleString()} ج.م` },
+          { label: 'الإيرادات (فواتير البيع)', value: `${revenue.toLocaleString()} ج.م` },
+          { label: 'إجمالي المصروفات', value: `${expensesTotals.toLocaleString()} ج.م` },
+          { label: 'صافي الربح / الخسارة', value: `${(revenue - expensesTotals).toLocaleString()} ج.م` },
         ];
       }
       case 'payments': {
-        const paidInvs = invoices.filter(i => i.status === 'paid');
         return [
-          { label: 'المدفوعات المستلمة', value: `${paidInvs.reduce((s, i) => s + i.total, 0).toLocaleString()} ج.م` },
-          { label: 'عدد المعاملات', value: `${paidInvs.length}` },
+          { label: 'إجمالي المدفوعات المستلمة', value: `${paymentsTotals.toLocaleString()} ج.م` },
         ];
       }
       case 'financial': {
         const revenue = invoices.reduce((s, i) => s + i.total, 0);
-        const cost = invoices.reduce((s, inv) => s + (inv.items || []).reduce((is, it) => is + (it.unitPrice * 0.6) * it.quantity, 0), 0);
         return [
-          { label: 'إجمالي الأصول', value: `${revenue.toLocaleString()} ج.م` },
-          { label: 'صافي الربح', value: `${Math.max(0, revenue - cost).toLocaleString()} ج.م` },
+          { label: 'إجمالي الإيرادات', value: `${revenue.toLocaleString()} ج.م` },
+          { label: 'إجمالي المدفوعات المحصلة', value: `${paymentsTotals.toLocaleString()} ج.م` },
+          { label: 'إجمالي المصروفات', value: `${expensesTotals.toLocaleString()} ج.م` },
         ];
       }
       default: return [];

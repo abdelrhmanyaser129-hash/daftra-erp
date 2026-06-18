@@ -15,6 +15,7 @@ import {
   FileText,
   Search
 } from 'lucide-react';
+import { getInvoiceNumber, recordCustomerPayment, toNumber } from '../lib/financialCore';
 
 
 interface CustomerPaymentsViewProps {
@@ -26,6 +27,8 @@ interface CustomerPayment {
   id: string;
   paymentNumber: string;
   invoiceNumber: string;
+  invoiceId?: string;
+  clientId?: string;
   clientName: string;
   method: string;
   date: string;
@@ -73,6 +76,28 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     if (cl) setClients(cl);
     const { data: safes } = await supabase.from('safes_banks').select('*');
     if (safes) setSafesBanks(safes);
+    const { data: pays, error: paysError } = await supabase
+      .from('customer_payments')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (paysError) {
+      console.error('Error loading customer payments:', paysError);
+      return;
+    }
+    if (pays) {
+      setPayments(pays.map((p: any) => ({
+        id: p.id,
+        paymentNumber: p.payment_number || '',
+        invoiceNumber: p.invoice_number || '',
+        invoiceId: p.invoice_id || '',
+        clientId: p.client_id || '',
+        clientName: p.client_name || '',
+        method: p.payment_method || '',
+        date: p.payment_date || (p.created_at ? p.created_at.split('T')[0] : ''),
+        amount: toNumber(p.amount),
+        status: p.status || 'completed'
+      })));
+    }
   };
 
   // Add payment modal state
@@ -84,7 +109,7 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
   const [paymentNote, setPaymentNote] = useState('');
   const [selectedPaymentTreasuryId, setSelectedPaymentTreasuryId] = useState('');
 
-  const unpaidInvoices = invoices.filter(inv => inv.status === 'unpaid' || inv.status === 'overdue' || inv.status === 'partial');
+  const unpaidInvoices = invoices.filter(inv => inv.status === 'unpaid' || inv.status === 'overdue' || inv.status === 'partial' || inv.status === 'partially_returned');
 
   const handleClearFilters = () => {
     setClientFilter('any');
@@ -137,56 +162,23 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     const invoice = invoices.find(inv => inv.id === selectedInvoiceId);
     if (!invoice) return;
 
-    const paidSoFar = (invoice.deposit_amount || 0);
-    const newPaid = paidSoFar + paymentAmount;
-    const newStatus = newPaid >= invoice.total ? 'paid' : 'partial';
-
-    const payment: CustomerPayment = {
-      id: `pay-${Date.now()}`,
-      paymentNumber: getNextPaymentNumber(),
-      invoiceNumber: invoice.invoiceNumber,
-      clientName: invoice.clientName,
-      method: paymentMethodNew === 'cash' ? 'نقداً' : paymentMethodNew === 'bank' ? 'تحويل بنكي' : 'بطاقة ائتمان',
-      date: paymentDate,
-      amount: paymentAmount,
-      status: 'completed'
-    };
-
-    // Update invoice status and deposit/remaining
-    await supabase.from('invoices').update({
-      status: newStatus,
-      deposit_amount: newPaid,
-      remaining_amount: Math.max(0, invoice.total - newPaid)
-    }).eq('id', selectedInvoiceId);
-
-    // Treasury update
-    const { data: treasury } = await supabase.from('safes_banks').select('balance').eq('id', selectedPaymentTreasuryId).single();
-    if (treasury) {
-      const currentBalance = parseFloat(treasury.balance) || 0;
-      const newBalance = currentBalance + paymentAmount;
-      await supabase.from('safes_banks').update({ balance: newBalance }).eq('id', selectedPaymentTreasuryId);
-      await supabase.from('treasury_transactions').insert({
-        treasury_id: selectedPaymentTreasuryId,
-        transaction_type: 'sale_payment',
-        reference_type: 'invoice',
-        reference_id: selectedInvoiceId,
-        reference_number: invoice.invoiceNumber,
-        description: `تحصيل دفعة ${paymentAmount} ج.م من ${invoice.clientName} - فاتورة ${invoice.invoiceNumber}`,
+    const methodLabel = paymentMethodNew === 'cash' ? 'نقدا' : paymentMethodNew === 'bank' ? 'تحويل بنكي' : 'بطاقة ائتمان';
+    try {
+      await recordCustomerPayment({
+        invoice,
         amount: paymentAmount,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        created_by: 'system'
+        paymentMethod: methodLabel,
+        paymentDate,
+        treasuryId: selectedPaymentTreasuryId,
+        paymentNumber: getNextPaymentNumber(),
+        notes: paymentNote,
+        createdBy: 'system',
       });
+    } catch (err: any) {
+      showToast?.(err.message || 'فشل تسجيل الدفعة.', 'error');
+      return;
     }
 
-    // Client balance update
-    const { data: client } = await supabase.from('clients').select('balance, id').eq('id', invoice.client_id).single();
-    if (client) {
-      const oldBal = parseFloat(client.balance) || 0;
-      await supabase.from('clients').update({ balance: oldBal - paymentAmount }).eq('id', client.id);
-    }
-
-    setPayments(prev => [payment, ...prev]);
     setShowAddModal(false);
     setSelectedInvoiceId('');
     setSelectedPaymentTreasuryId('');
@@ -194,8 +186,8 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
     setPaymentMethodNew('cash');
     setPaymentDate(new Date().toISOString().split('T')[0]);
     setPaymentNote('');
-    loadData();
-    showToast?.(`تم تسجيل دفعة بقيمة ${paymentAmount} ج.م للفاتورة #${invoice.invoiceNumber} بنجاح.`);
+    await loadData();
+    showToast?.(`تم تسجيل دفعة بقيمة ${paymentAmount} ج.م للفاتورة #${getInvoiceNumber(invoice)} بنجاح.`);
   };
 
   const getSelectedInvoice = () => invoices.find(inv => inv.id === selectedInvoiceId);
@@ -528,7 +520,7 @@ export default function CustomerPaymentsView({ setView, showToast }: CustomerPay
                           onChange={(e) => {
                             setSelectedInvoiceId(e.target.value);
                             const inv = invoices.find(i => i.id === e.target.value);
-                            if (inv) setPaymentAmount(inv.total);
+                            if (inv) setPaymentAmount(Math.max(0, toNumber(inv.remaining_amount) || (toNumber(inv.total) - toNumber(inv.deposit_amount))));
                           }}
                           className="w-full bg-white border border-[#cbd5e1] rounded px-3 py-2 text-xs text-slate-700 outline-none appearance-none cursor-pointer text-right pl-8"
                           style={{ direction: 'rtl' }}

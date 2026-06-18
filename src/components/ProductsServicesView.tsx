@@ -71,8 +71,8 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
   const [newName, setNewName] = useState<string>('');
   const [newCode, setNewCode] = useState<string>('');
   const [newBarcode, setNewBarcode] = useState<string>('');
-  const [newCategory, setNewCategory] = useState<string>('عام');
-  const [newBrand, setNewBrand] = useState<string>('بدون ماركة');
+  const [newCategory, setNewCategory] = useState<string>('');
+  const [newBrand, setNewBrand] = useState<string>('');
   const [newStatus, setNewStatus] = useState<'نشط' | 'غير نشط'>('نشط');
   const [newItemType, setNewItemType] = useState<string>('منتج مخزني');
   const [newSupplier, setNewSupplier] = useState<string>('مورد عام');
@@ -103,11 +103,21 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [editProductData, setEditProductData] = useState<Partial<Product> | null>(null);
 
+  // Dynamic categories & brands
+  const [categoriesList, setCategoriesList] = useState<{ id: string; name: string }[]>([]);
+  const [brandsList, setBrandsList] = useState<{ id: string; name: string }[]>([]);
+
   // Load Products from Supabase
   useEffect(() => {
     supabase.from('products').select('*').order('created_at', { ascending: false }).then(({ data }) => {
       if (data) setProducts(data.map(mapProductRow));
       else setProducts([]);
+    });
+    supabase.from('product_categories').select('id, name').order('name').then(({ data }) => {
+      if (data) setCategoriesList(data);
+    });
+    supabase.from('product_brands').select('id, name').order('name').then(({ data }) => {
+      if (data) setBrandsList(data);
     });
   }, []);
 
@@ -198,8 +208,8 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
     setNewSku(paddedSku);
     setNewCode(`PRD-${paddedSku}`);
     setNewDescription('');
-    setNewCategory('عام');
-    setNewBrand('بدون ماركة');
+    setNewCategory(categoriesList.length > 0 ? categoriesList[0].name : '');
+    setNewBrand(brandsList.length > 0 ? brandsList[0].name : '');
     setNewBarcode(`${Math.floor(Math.random() * 900000000) + 100000000}`);
     setNewIsOnline(true);
     setNewIsFeatured(false);
@@ -537,11 +547,9 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                       onChange={(e) => setNewCategory(e.target.value)}
                       className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-600 bg-white text-right focus:outline-none focus:border-[#0074b1]"
                     >
-                      <option value="عام">عام</option>
-                      <option value="إلكترونيات">إلكترونيات</option>
-                      <option value="خدمات سحابية">خدمات سحابية</option>
-                      <option value="برمجيات ورخص">برمجيات ورخص</option>
-                      <option value="أجهزة ومعدات">أجهزة ومعدات</option>
+                      {categoriesList.map(c => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -553,11 +561,9 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                       onChange={(e) => setNewBrand(e.target.value)}
                       className="w-full border border-slate-300 rounded p-1.5 text-xs text-slate-600 bg-white text-right focus:outline-none focus:border-[#0074b1]"
                     >
-                      <option value="بدون ماركة">بدون ماركة</option>
-                      <option value="Apple">Apple</option>
-                      <option value="Samsung">Samsung</option>
-                      <option value="HP">HP</option>
-                      <option value="Dell">Dell</option>
+                      {brandsList.map(b => (
+                        <option key={b.id} value={b.name}>{b.name}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -1005,11 +1011,9 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                 className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs text-slate-600 bg-white focus:outline-none focus:border-[#0074b1] transition-all text-right shadow-2xs"
               >
                 <option value="[جميع التصنيفات]">[جميع التصنيفات]</option>
-                <option value="عام">عام</option>
-                <option value="إلكترونيات">إلكترونيات</option>
-                <option value="خدمات سحابية">خدمات سحابية</option>
-                <option value="برمجيات ورخص">برمجيات ورخص</option>
-                <option value="أجهزة ومعدات">أجهزة ومعدات</option>
+                {categoriesList.map(c => (
+                  <option key={c.id} value={c.name}>{c.name}</option>
+                ))}
               </select>
             </div>
 
@@ -1024,11 +1028,9 @@ export default function ProductsServicesView({ setView }: ProductsServicesViewPr
                 className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs text-slate-600 bg-white focus:outline-none focus:border-[#0074b1] transition-all text-right shadow-2xs"
               >
                 <option value="[جميع الماركات]">[جميع الماركات]</option>
-                <option value="بدون ماركة">بدون ماركة</option>
-                <option value="Apple">Apple</option>
-                <option value="Samsung">Samsung</option>
-                <option value="HP">HP</option>
-                <option value="Dell">Dell</option>
+                {brandsList.map(b => (
+                  <option key={b.id} value={b.name}>{b.name}</option>
+                ))}
               </select>
             </div>
 

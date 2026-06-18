@@ -254,7 +254,7 @@ export default function Header({ currentView, setView, toggleSidebar, currentUse
           {/* Text labels - hidden on mobile/tablet to avoid overflow and wrapping */}
           <div className="hidden md:flex flex-col text-right items-end whitespace-nowrap">
             <span className="font-extrabold text-[#ffffff] text-[13px] leading-tight cursor-pointer hover:underline">{currentUser.name}</span>
-            <span className="text-[10px] text-white/70">{roleLabels[currentUser.role] || 'Main Branch'}</span>
+            <span className="text-[10px] text-white/70">{roleLabels[currentUser.role] || 'مسؤول'}</span>
           </div>
 
           {/* Down Chevron triangle */}

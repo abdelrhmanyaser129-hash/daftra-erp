@@ -4,6 +4,7 @@ import {
   Plus, Trash2, ArrowLeft, X, ChevronDown, Package, AlertCircle, CheckCircle, XCircle
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { recordInventoryMovement } from '../lib/inventoryCore';
 
 interface Product {
   id: string;
@@ -193,26 +194,9 @@ export default function CompositeProductsView({ setView }: CompositeProductsView
   const handleDeductStock = async (comp: CompositeProduct) => {
     if (!warehouseId) { alert('لم يتم العثور على مستودع'); return; }
     if (!window.confirm(`هل أنت متأكد من خصم مكونات "${comp.name}" من المخزون؟`)) return;
-    const { data: stockData } = await supabase
-      .from('warehouse_stock')
-      .select('product_id, quantity')
-      .eq('warehouse_id', warehouseId);
-    const stockMap: Record<string, number> = {};
-    if (stockData) {
-      for (const s of stockData) stockMap[s.product_id as string] = Number(s.quantity);
+    for (const item of comp.items) {
+      await recordInventoryMovement({ productId: item.product_id, warehouseId, movementType: 'adjustment', referenceType: 'composite_deduction', referenceId: comp.id, referenceNumber: comp.name, qtyChange: -item.quantity });
     }
-    const records = comp.items.map(item => {
-      const current = stockMap[item.product_id] ?? 0;
-      return {
-        product_id: item.product_id,
-        warehouse_id: warehouseId,
-        quantity: Math.max(0, current - item.quantity),
-      };
-    });
-    const { error } = await supabase
-      .from('warehouse_stock')
-      .upsert(records, { onConflict: 'product_id, warehouse_id' });
-    if (error) { alert('فشل خصم المخزون: ' + error.message); return; }
     alert('تم خصم المخزون بنجاح');
     loadComposites();
   };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
+import { toNumber } from '../lib/financialCore';
 import {
   Printer,
   FileDown,
@@ -17,6 +18,7 @@ interface Client {
   id: string;
   name: string;
   balance: number;
+  opening_balance?: number;
 }
 
 interface Transaction {
@@ -66,12 +68,17 @@ export default function CustomerStatementView({ setView }: CustomerStatementView
 
   useEffect(() => {
     const loadClients = async () => {
-      const { data, error } = await supabase.from('clients').select('id, name, balance');
+      const { data, error } = await supabase.from('clients').select('id, name, full_name, balance, opening_balance');
       if (error) {
         console.error('Failed to load clients', error);
         return;
       }
-      setClients(data || []);
+      setClients((data || []).map((c: any) => ({
+        id: c.id,
+        name: c.full_name || c.name || '',
+        balance: toNumber(c.balance),
+        opening_balance: toNumber(c.opening_balance),
+      })));
     };
     loadClients();
   }, []);
@@ -108,90 +115,85 @@ export default function CustomerStatementView({ setView }: CustomerStatementView
 
     try {
       const client = selectedClient!;
-      const openingBalance = Number(client.balance) || 0;
-
-      const [invoicesResult, returnsResult] = await Promise.all([
+      const [invoicesResult, paymentsResult, returnsResult] = await Promise.all([
         supabase
           .from('invoices')
-          .select('id, invoice_number, total, paid, created_at, notes')
+          .select('id, invoice_number, total, status, date, created_at, notes')
           .eq('client_id', selectedClientId)
-          .gte('created_at', fromDate)
-          .lte('created_at', toDate + 'T23:59:59Z')
-          .order('created_at', { ascending: true }),
+          .neq('status', 'draft'),
+        supabase
+          .from('customer_payments')
+          .select('id, payment_number, invoice_number, amount, payment_date, created_at, notes')
+          .eq('client_id', selectedClientId)
+          .eq('status', 'completed'),
         supabase
           .from('returned_invoices')
-          .select('id, return_number, date, total, notes')
-          .eq('client_id', selectedClientId)
-          .gte('date', fromDate)
-          .lte('date', toDate)
-          .order('date', { ascending: true }),
+          .select('id, return_number, invoice_id, date, total, notes')
+          .eq('client_id', selectedClientId),
       ]);
 
       if (invoicesResult.error) throw invoicesResult.error;
+      if (paymentsResult.error) throw paymentsResult.error;
       if (returnsResult.error) throw returnsResult.error;
 
-      const transactions: Transaction[] = [];
-      let totalSales = 0;
-      let totalPayments = 0;
-      let totalReturns = 0;
+      const allRows: { date: string; description: string; type: Transaction['type']; debit: number; credit: number; sortKey: string }[] = [];
 
-      const tempRows: { date: string; description: string; type: Transaction['type']; debit: number; credit: number; sortKey: string }[] = [];
-
-      (invoicesResult.data || []).forEach(inv => {
-        const total = Number(inv.total) || 0;
-        const paid = Number(inv.paid) || 0;
-        totalSales += total;
-
-        tempRows.push({
-          date: inv.created_at ? inv.created_at.split('T')[0] : '',
+      (invoicesResult.data || []).forEach((inv: any) => {
+        const date = inv.date || (inv.created_at ? inv.created_at.split('T')[0] : '');
+        allRows.push({
+          date,
           description: `فاتورة مبيعات #${inv.invoice_number}${inv.notes ? ` - ${inv.notes}` : ''}`,
           type: 'فاتورة مبيعات',
-          debit: total,
+          debit: toNumber(inv.total),
           credit: 0,
-          sortKey: `A_${inv.created_at}_${inv.invoice_number}`,
+          sortKey: `${date || inv.created_at || ''}_A_${inv.invoice_number}`,
         });
-
-        if (paid > 0) {
-          totalPayments += paid;
-          tempRows.push({
-            date: inv.created_at ? inv.created_at.split('T')[0] : '',
-            description: `مدفوعات عن فاتورة #${inv.invoice_number}`,
-            type: 'مدفوعات',
-            debit: 0,
-            credit: paid,
-            sortKey: `B_${inv.created_at}_${inv.invoice_number}`,
-          });
-        }
       });
 
-      (returnsResult.data || []).forEach(ret => {
-        const total = Number(ret.total) || 0;
-        totalReturns += total;
-        tempRows.push({
-          date: ret.date || '',
+      (paymentsResult.data || []).forEach((payment: any) => {
+        const date = payment.payment_date || (payment.created_at ? payment.created_at.split('T')[0] : '');
+        allRows.push({
+          date,
+          description: `دفعة عميل #${payment.payment_number}${payment.invoice_number ? ` - فاتورة #${payment.invoice_number}` : ''}`,
+          type: 'مدفوعات',
+          debit: 0,
+          credit: toNumber(payment.amount),
+          sortKey: `${date || payment.created_at || ''}_B_${payment.payment_number}`,
+        });
+      });
+
+      (returnsResult.data || []).forEach((ret: any) => {
+        const date = ret.date || '';
+        allRows.push({
+          date,
           description: `مرتجع مبيعات #${ret.return_number}${ret.notes ? ` - ${ret.notes}` : ''}`,
           type: 'مرتجع مبيعات',
           debit: 0,
-          credit: total,
-          sortKey: `C_${ret.date}_${ret.return_number}`,
+          credit: toNumber(ret.total),
+          sortKey: `${date}_C_${ret.return_number}`,
         });
       });
 
-      tempRows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+      allRows.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-      let balance = openingBalance;
-      tempRows.forEach(row => {
-        balance += row.debit - row.credit;
-        transactions.push({ ...row, runningBalance: balance });
+      const openingBase = toNumber(client.opening_balance);
+      const beforeRows = allRows.filter(row => row.date && row.date < fromDate);
+      const rangeRows = allRows.filter(row => (!row.date || row.date >= fromDate) && (!row.date || row.date <= toDate));
+      const openingBalance = beforeRows.reduce((sum, row) => sum + row.debit - row.credit, openingBase);
+
+      let runningBalance = openingBalance;
+      const transactions = rangeRows.map(row => {
+        runningBalance += row.debit - row.credit;
+        return { ...row, runningBalance };
       });
 
       setReportData({
         clientName: client.name,
         openingBalance,
-        totalSales,
-        totalPayments,
-        totalReturns,
-        closingBalance: balance,
+        totalSales: rangeRows.reduce((sum, row) => sum + row.debit, 0),
+        totalPayments: rangeRows.filter(row => row.type === 'مدفوعات').reduce((sum, row) => sum + row.credit, 0),
+        totalReturns: rangeRows.filter(row => row.type === 'مرتجع مبيعات').reduce((sum, row) => sum + row.credit, 0),
+        closingBalance: runningBalance,
         transactions,
       });
     } catch (err: any) {

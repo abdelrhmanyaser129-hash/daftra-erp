@@ -253,7 +253,7 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
             {/* Inventory Submenu */}
             <div
               className={`bg-slate-50/40 border-r border-[#e9eff4] overflow-hidden transition-all duration-300 space-y-0.5 ${
-                expandedMenus.inventory ? 'max-h-[400px] py-1 opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
+                expandedMenus.inventory ? 'max-h-[650px] py-1 opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
               }`}
             >
               <button
@@ -263,6 +263,22 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
                 }`}
               >
                 المنتجات والخدمات
+              </button>
+              <button
+                onClick={() => handleMenuClick('categories')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('categories') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                التصنيفات
+              </button>
+              <button
+                onClick={() => handleMenuClick('brands')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('brands') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                الماركات
               </button>
               <button
                 onClick={() => handleMenuClick('inventory-vouchers')}
@@ -279,6 +295,14 @@ export default function Sidebar({ currentView, setView, isOpen, toggleSidebar, u
                 }`}
               >
                 المستودعات
+              </button>
+              <button
+                onClick={() => handleMenuClick('branches')}
+                className={`w-full text-right pr-12 pl-4 py-2 text-xs transition-all ${
+                  isViewActive('branches') ? 'text-daftra-blue font-bold bg-daftra-light-blue/60 border-r-2 border-daftra-blue' : 'text-slate-600 hover:text-daftra-blue hover:bg-slate-50'
+                }`}
+              >
+                الفروع
               </button>
               <button
                 onClick={() => handleMenuClick('composite-products')}
