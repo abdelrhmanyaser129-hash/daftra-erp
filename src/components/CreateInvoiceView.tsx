@@ -44,12 +44,14 @@ export default function CreateInvoiceView({
   const [safesBanks, setSafesBanks] = useState<any[]>([]);
 
   useEffect(() => {
-    supabase.from('clients').select('*').then(({ data }) => {
+    supabase.from('clients').select('*').then(({ data, error }) => {
+      if (error) console.error('Error loading clients:', error);
       if (data) {
         setClients(data.map(mapClientRow));
       }
     });
-    supabase.from('invoices').select('*').then(({ data }) => {
+    supabase.from('invoices').select('*').then(({ data, error }) => {
+      if (error) console.error('Error loading invoices:', error);
       if (data) {
         setInvoices(data);
         if (!editInvoiceId && data.length > 0) {
@@ -63,9 +65,9 @@ export default function CreateInvoiceView({
         }
       }
     });
-    supabase.from('products').select('id, name, code, selling_price, tax1').then(({ data }) => { if (data) setProducts(data); });
-    supabase.from('warehouses').select('id, name').then(({ data }) => { if (data) setWarehouses(data); });
-    supabase.from('safes_banks').select('id, name, type').then(({ data }) => { if (data) setSafesBanks(data); });
+    supabase.from('products').select('id, name, code, selling_price, tax1').then(({ data, error }) => { if (error) console.error('Error loading products:', error); if (data) setProducts(data); });
+    supabase.from('warehouses').select('id, name').then(({ data, error }) => { if (error) console.error('Error loading warehouses:', error); if (data) setWarehouses(data); });
+    supabase.from('safes_banks').select('id, name, type').then(({ data, error }) => { if (error) console.error('Error loading safes/banks:', error); if (data) setSafesBanks(data); });
   }, []);
 
   useEffect(() => {
@@ -329,7 +331,7 @@ export default function CreateInvoiceView({
     const deposit = depositAmount || 0;
     const remaining = grandTotal - deposit;
 
-    let calculatedStatusValue = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
+    let calculatedStatusValue: 'paid' | 'unpaid' | 'draft' | 'partial' = statusOverride || (alreadyPaid ? 'paid' : 'unpaid');
     if (statusOverride !== 'draft') {
       if (deposit > 0 && deposit >= grandTotal) {
         calculatedStatusValue = 'paid';
@@ -426,7 +428,7 @@ export default function CreateInvoiceView({
 
       const oldBalance = Number(customer.balance) || 0;
       await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
-    } else if (calculatedStatusValue !== 'draft' && calculatedStatusValue !== 'partial') {
+    } else if (calculatedStatusValue !== 'draft') {
       const oldBalance = Number(customer.balance) || 0;
       await supabase.from('clients').update({ balance: oldBalance + grandTotal - deposit }).eq('id', customer.id);
     }

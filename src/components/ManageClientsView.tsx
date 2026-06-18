@@ -24,7 +24,7 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
   const [loading, setLoading] = useState(true);
   const [filterQuery, setFilterQuery] = useState(searchQuery);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
-  const [followUpFilter, setFollowUpFilter] = useState<string>('today');
+  const [followUpFilter, setFollowUpFilter] = useState<string>('all');
   const [customDate, setCustomDate] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -38,7 +38,8 @@ export default function ManageClientsView({ setView, searchQuery, onSelectClient
 
   const loadClients = async () => {
     setLoading(true);
-    const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
+    if (error) console.error('Error loading clients:', error);
     if (data) {
       setClients(data.map(mapClientRow));
     }

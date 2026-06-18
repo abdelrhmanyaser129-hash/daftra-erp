@@ -15,8 +15,7 @@ import {
   AlertCircle,
   Pencil,
   Trash2,
-  MessageCircle,
-  Search
+  MessageCircle
 } from 'lucide-react';
 import { Invoice } from '../types';
 import { supabase } from '../lib/supabase';
